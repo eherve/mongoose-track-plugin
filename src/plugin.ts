@@ -4,6 +4,7 @@ import { updateToPipeline } from '@eherve/mongoose-update-to-pipeline';
 import * as lodash from 'lodash';
 import {
   CallbackWithoutResultAndOptionalError,
+  ClientSession,
   FilterQuery,
   Model,
   Query,
@@ -116,13 +117,13 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
       if (options.skipTrackPlugin) return next();
 
       if (!res.modifiedCount && !res.upsertedCount) return next();
-      await processOnUpdateFields(fields, this.model);
+      await processOnUpdateFields(fields, this.model, options.session);
       next();
     }
   );
 }
 
-async function processOnUpdateFields(fields: Field[], model: Model<any>) {
+async function processOnUpdateFields(fields: Field[], model: Model<any>, session: ClientSession | null = null) {
   const fieldsWithOnUpdate = lodash.filter(fields, field => typeof field.onUpdate === 'function');
   if (!fieldsWithOnUpdate.length) return;
 
@@ -155,8 +156,11 @@ async function processOnUpdateFields(fields: Field[], model: Model<any>) {
     }
   });
 
-  const data = await model.find(filter, projection).lean<any>();
-  await model.updateMany(filter, update, { skipTrackPlugin: true });
+  const data = await model
+    .find(filter, projection)
+    .session(session ?? null)
+    .lean<any>();
+  await model.updateMany(filter, update, { skipTrackPlugin: true }).session(session ?? null);
 
   lodash.forEach(fieldsWithOnUpdate, field => {
     const updated: any = [];

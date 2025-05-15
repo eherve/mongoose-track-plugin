@@ -81,11 +81,11 @@ function registerMiddleWare(schema, fields) {
             return next();
         if (!res.modifiedCount && !res.upsertedCount)
             return next();
-        await processOnUpdateFields(fields, this.model);
+        await processOnUpdateFields(fields, this.model, options.session);
         next();
     });
 }
-async function processOnUpdateFields(fields, model) {
+async function processOnUpdateFields(fields, model, session = null) {
     const fieldsWithOnUpdate = lodash.filter(fields, field => typeof field.onUpdate === 'function');
     if (!fieldsWithOnUpdate.length)
         return;
@@ -116,8 +116,11 @@ async function processOnUpdateFields(fields, model) {
             };
         }
     });
-    const data = await model.find(filter, projection).lean();
-    await model.updateMany(filter, update, { skipTrackPlugin: true });
+    const data = await model
+        .find(filter, projection)
+        .session(session ?? null)
+        .lean();
+    await model.updateMany(filter, update, { skipTrackPlugin: true }).session(session ?? null);
     lodash.forEach(fieldsWithOnUpdate, field => {
         const updated = [];
         lodash.each(data, d => {
