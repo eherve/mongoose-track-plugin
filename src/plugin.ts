@@ -13,6 +13,8 @@ import {
   SchemaTypes,
   UpdateQuery,
 } from 'mongoose';
+import { hasQueryFieldUpdate } from './update-tools';
+import { inspect } from 'util';
 
 export type FieldUpdateInfo<T> = {
   value: T | null;
@@ -105,6 +107,7 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
       if (options.skipTrackPlugin) return next();
 
       const update = consolidateUpdate(fields, options, this.getFilter(), this.getUpdate(), options.arrayFilters);
+      // console.log(inspect(update, false, null, true));
       if (update) this.setUpdate(update);
       next();
     }
@@ -131,29 +134,30 @@ async function processOnUpdateFields(fields: Field[], model: Model<any>, session
   const projection: any = {};
   const update: any = { $set: {} };
   lodash.each(fieldsWithOnUpdate, field => {
+    if (field.arrays?.length) return console.warn(`onUpdate is not managed for array fields: ${field.path}`);
     filter.$or!.push({ [`${field.infoPath}.triggerOnUpdate`]: true });
-    if (field.arrays?.length) {
-      const chunks = lodash.split(field.infoPath, '.');
-      const path = lodash.reduce(
-        chunks,
-        (pv, cv) => {
-          if (!!pv.length) pv += '.';
-          pv += cv;
-          if (lodash.find(field.arrays, e => e === cv)) pv += '.$[]';
-          return pv;
-        },
-        ''
-      );
-      update.$set[`${path}.triggerOnUpdate`] = false;
-      projection[field.path.replace('.', '_')] = {
-        $filter: { input: `$${field.infoPath}`, as: 'item', cond: { $eq: ['$$item.triggerOnUpdate', true] } },
-      };
-    } else {
-      update.$set[`${field.infoPath}.triggerOnUpdate`] = false;
-      projection[field.path.replace('.', '_')] = {
-        $cond: { if: { $eq: [`$${field.infoPath}.triggerOnUpdate`, true] }, then: `$${field.infoPath}`, else: null },
-      };
-    }
+    // if (field.arrays?.length) {
+    //   const chunks = lodash.split(field.infoPath, '.');
+    //   const path = lodash.reduce(
+    //     chunks,
+    //     (pv, cv) => {
+    //       if (!!pv.length) pv += '.';
+    //       pv += cv;
+    //       if (lodash.find(field.arrays, e => e === cv)) pv += '.$[]';
+    //       return pv;
+    //     },
+    //     ''
+    //   );
+    //   update.$set[`${path}.triggerOnUpdate`] = false;
+    //   projection[field.path.replace('.', '_')] = {
+    //     $filter: { input: `$${field.infoPath}`, as: 'item', cond: { $eq: ['$$item.triggerOnUpdate', true] } },
+    //   };
+    // } else {
+    update.$set[`${field.infoPath}.triggerOnUpdate`] = false;
+    projection[field.path.replace('.', '_')] = {
+      $cond: { if: { $eq: [`$${field.infoPath}.triggerOnUpdate`, true] }, then: `$${field.infoPath}`, else: null },
+    };
+    // }
   });
 
   const data = await model
@@ -207,40 +211,9 @@ function consolidateUpdate(
     update.push({ $set });
     return update;
   }
-  const transformedUpdate = updateToPipeline(filter, update, { arrayFilters });
+  const transformedUpdate = updateToPipeline(filter, update, { arrayFilters, disabledWarn: true });
   transformedUpdate.push({ $set });
   return transformedUpdate;
-}
-
-function hasQueryFieldUpdate(updates: any, path: string): boolean {
-  for (let update of (Array.isArray(updates) ? updates : [updates]) as any[]) {
-    if (hasUpdateValue(update, path)) return true;
-    if (hasUpdateValue(update.$set, path)) return true;
-    if (hasUpdateValue(update.$addFields, path)) return true;
-    if (hasUpdateValue(update.$inc, path)) return true;
-    if (hasUpdateValue(update.$pull, path)) return true;
-    if (hasUpdateValue(update.$push, path)) return true;
-  }
-  return false;
-}
-
-function hasUpdateValue(obj: any, path: string): boolean {
-  if (!obj) return false;
-  if (obj[path] !== undefined) return true;
-  if (lodash.get(obj, path) !== undefined) return true;
-
-  const found = lodash.find(lodash.keys(obj), key => {
-    const stripKey = lodash.replace(key, /\.\$(\[[^\]]*\])?/g, '');
-    if (lodash.startsWith(path, stripKey)) return true;
-  });
-  if (found) return true;
-
-  const chunks = lodash.split(path, '.');
-  for (let i = chunks.length - 1; i >= 0; --i) {
-    const subpath = chunks.slice(0, i).join('.');
-    if (obj[subpath] !== undefined) return true;
-  }
-  return false;
 }
 
 function addFieldInfoSchemaPath(schema: Schema, field: Field) {

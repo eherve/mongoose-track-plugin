@@ -1,6 +1,6 @@
 {
   "name": "@eherve/mongoose-track-plugin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "author": "Eric Herve <eric.herve.95@gmail.com>",
   "license": "ISC",
@@ -36,7 +36,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@eherve/mongoose-update-to-pipeline": "^1.0.1",
+    "@eherve/mongoose-update-to-pipeline": "^1.1.1",
     "lodash": "^4.17.21",
     "uuid": "^11.0.5"
   }
