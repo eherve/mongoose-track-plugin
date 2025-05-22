@@ -32,7 +32,7 @@ function hasUpdateValue(obj, path) {
         const stripKey = lodash.replace(key, /\.\$(\[[^\]]*\])?/g, '');
         if (lodash.startsWith(path, stripKey))
             return true;
-        if (lodash.startsWith(stripKey, path))
+        if (lodash.startsWith(stripKey, `${path}.`))
             return true;
     });
     if (found)
