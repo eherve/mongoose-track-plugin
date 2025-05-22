@@ -22,7 +22,7 @@ function hasUpdateValue(obj: any, path: string): boolean {
   const found = lodash.find(lodash.keys(obj), key => {
     const stripKey = lodash.replace(key, /\.\$(\[[^\]]*\])?/g, '');
     if (lodash.startsWith(path, stripKey)) return true;
-    if (lodash.startsWith(stripKey, path)) return true;
+    if (lodash.startsWith(stripKey, `${path}.`)) return true;
   });
   if (found) return true;
 
