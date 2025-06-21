@@ -5,6 +5,7 @@ import * as chaiAsPromised from 'chai-as-promised';
 import mongoose from 'mongoose';
 import { v4 } from 'uuid';
 import { trackPlugin } from './plugin';
+import { inspect } from 'util';
 
 const mongoUrl = `mongodb://localhost:4242/test-datatable`;
 mongoose.set('strictQuery', false);
@@ -13,7 +14,14 @@ const embeddedSchema = new mongoose.Schema({
   code: { type: String },
   status: {
     type: String,
-    track: true,
+    track: {
+      onUpdate: data => {
+        onUpdateData = data;
+      },
+      onUpdateMetadata: {
+        code: '$code',
+      },
+    },
   },
   stage: {
     type: String,
@@ -29,6 +37,9 @@ const schema = new mongoose.Schema({
     track: {
       onUpdate: data => {
         onUpdateData = data;
+      },
+      onUpdateMetadata: {
+        code: '$code',
       },
     },
     enum: ['disponible', 'indisponible', 'précommande', 'erreur'],
@@ -49,7 +60,17 @@ const schema = new mongoose.Schema({
         code: { type: String },
         status: {
           type: String,
-          track: true,
+          // track: true,
+          track: {
+            onUpdate: data => {
+              onUpdateData = data;
+            },
+            onUpdateMetadata: {
+              code: '$code',
+              arrayCodes: '$array.code',
+              arrayCode: '$$item.code',
+            },
+          },
         },
         stage: {
           type: String,
@@ -66,6 +87,7 @@ const schema = new mongoose.Schema({
 schema.plugin(trackPlugin);
 
 const model: mongoose.Model<any> = mongoose.model('Test', schema) as any;
+const otherModel: mongoose.Model<any> = mongoose.model('Embedded', embeddedSchema) as any;
 
 chai.use(chaiAsPromised);
 const expect = chai.expect;
@@ -198,12 +220,12 @@ describe('Track Lib', () => {
       expect(data.embeddedSchema.statusInfo).to.not.be.null;
       expect(data.embeddedSchema.statusInfo).to.have.property('value', value);
       expect(data.embeddedSchema.statusInfo).to.have.property('previousValue', previousValue);
-      // expect(onUpdateData).to.not.be.null;
-      // expect(onUpdateData[0]).to.not.be.null;
-      // expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
-      // expect(onUpdateData[0].update).to.not.be.null;
-      // expect(onUpdateData[0].update).to.have.property('value', value);
-      // expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.property('value', value);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
     });
 
     it('update one on embeded schema array property', async () => {
@@ -223,13 +245,13 @@ describe('Track Lib', () => {
       expect(data.embeddedSchemaArray[0].statusInfo).to.not.be.null;
       expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('value', value);
       expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('previousValue', previousValue);
-      // expect(onUpdateData).to.not.be.null;
-      // expect(onUpdateData[0]).to.not.be.null;
-      // expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
-      // expect(onUpdateData[0].update).to.not.be.null;
-      // expect(onUpdateData[0].update).to.have.length(1);
-      // expect(onUpdateData[0].update[0]).to.have.property('value', value);
-      // expect(onUpdateData[0].update[0]).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.length(1);
+      expect(onUpdateData[0].update[0]).to.have.property('value', value);
+      expect(onUpdateData[0].update[0]).to.have.property('previousValue', previousValue);
     });
 
     it('update one on array property', async () => {
@@ -245,31 +267,32 @@ describe('Track Lib', () => {
       expect(data.array[0].statusInfo).to.not.be.null;
       expect(data.array[0].statusInfo).to.have.property('value', value);
       expect(data.array[0].statusInfo).to.have.property('previousValue', previousValue);
-      // expect(onUpdateData).to.not.be.null;
-      // expect(onUpdateData[0]).to.not.be.null;
-      // expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
-      // expect(onUpdateData[0].update).to.not.be.null;
-      // expect(onUpdateData[0].update).to.have.length(1);
-      // expect(onUpdateData[0].update[0]).to.have.property('value', value);
-      // expect(onUpdateData[0].update[0]).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.length(1);
+      expect(onUpdateData[0].update[0]).to.have.property('value', value);
+      expect(onUpdateData[0].update[0]).to.have.property('previousValue', previousValue);
     });
 
     it('update many on property', async () => {
       await model.find({}).then(async previous => {
-        await model.updateMany({}, { $set: { status: 'indisponible' } });
+        const value = v4();
+        await model.updateMany({}, { $set: { status: value } });
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
-        // expect(onUpdateData).to.not.be.null;
+        expect(onUpdateData).to.not.be.null;
         data.forEach((d, i) => {
           expect(d).to.not.be.null;
-          expect(d).to.have.property('status', 'indisponible');
+          expect(d).to.have.property('status', value);
           expect(d.statusInfo).to.not.be.null;
-          expect(d.statusInfo).to.have.property('value', 'indisponible');
+          expect(d.statusInfo).to.have.property('value', value);
           expect(d.statusInfo).to.have.property('previousValue', previous[i].status);
-          // expect(onUpdateData[i]).to.not.be.null;
-          // expect(onUpdateData[i]._id.toHexString()).to.be.equal(d._id.toHexString());
-          // expect(onUpdateData[i].update).to.not.be.null;
+          expect(onUpdateData[i]).to.not.be.null;
+          expect(onUpdateData[i]._id.toHexString()).to.be.equal(d._id.toHexString());
+          expect(onUpdateData[i].update).to.not.be.null;
         });
       });
     });
@@ -372,6 +395,92 @@ describe('Track Lib', () => {
           expect(d.statusInfo).to.have.property('previousValue', previous[i].status);
         });
       });
+    });
+
+    it('aggregation merge with whenMatched pipeline on property', async () => {
+      const match = { code: 'A001' };
+      const previousValue = (await model.findOne(match)).status;
+      const value = v4();
+      await model.aggregate([
+        { $match: match },
+        {
+          $merge: {
+            into: model.collection.collectionName,
+            whenNotMatched: 'discard',
+            whenMatched: [{ $set: { status: value } }],
+          },
+        },
+      ]);
+      const data = await model.findOne(match);
+      expect(data).to.not.be.null;
+      expect(data).to.have.property('status', value);
+      expect(data.statusInfo).to.not.be.null;
+      expect(data.statusInfo).to.have.property('value', value);
+      expect(data.statusInfo).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.property('value', value);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+    });
+
+    it('aggregation merge with whenMatched as merge on property', async () => {
+      const match = { code: 'A001' };
+      const previousValue = (await model.findOne(match)).status;
+      const value = v4();
+      await model.aggregate([
+        { $match: match },
+        { $project: { status: value } },
+        {
+          $merge: {
+            into: model.collection.collectionName,
+            whenNotMatched: 'discard',
+            whenMatched: 'merge',
+          },
+        },
+      ]);
+      const data = await model.findOne(match);
+      expect(data).to.not.be.null;
+      expect(data).to.have.property('status', value);
+      expect(data.statusInfo).to.not.be.null;
+      expect(data.statusInfo).to.have.property('value', value);
+      expect(data.statusInfo).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.property('value', value);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+    });
+
+    it('aggregation merge with whenMatched as replace on property', async () => {
+      const match = { code: 'A001' };
+      const previousValue = (await model.findOne(match)).status;
+      const value = v4();
+      await model.aggregate([
+        { $match: match },
+        { $addFields: { status: value } },
+        {
+          $merge: {
+            into: model.collection.collectionName,
+            whenNotMatched: 'discard',
+            whenMatched: 'replace',
+          },
+        },
+      ]);
+      const data = await model.findOne(match);
+      expect(data).to.not.be.null;
+      expect(data).to.have.property('status', value);
+      expect(data.statusInfo).to.not.be.null;
+      expect(data.statusInfo).to.have.property('value', value);
+      expect(data.statusInfo).to.have.property('previousValue', previousValue);
+      expect(onUpdateData).to.not.be.null;
+      expect(onUpdateData[0]).to.not.be.null;
+      expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
+      expect(onUpdateData[0].update).to.not.be.null;
+      expect(onUpdateData[0].update).to.have.property('value', value);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
     });
   });
 
