@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hasQueryFieldUpdate = hasQueryFieldUpdate;
+exports.getAggregateTargetModel = getAggregateTargetModel;
+exports.getMergePipelineStage = getMergePipelineStage;
+exports.addMergeUpdateStage = addMergeUpdateStage;
 const lodash = require("lodash");
 function hasQueryFieldUpdate(updates, path) {
     for (let update of (Array.isArray(updates) ? updates : [updates])) {
@@ -44,4 +47,38 @@ function hasUpdateValue(obj, path) {
             return true;
     }
     return false;
+}
+function getAggregateTargetModel(aggregate) {
+    const $merge = getMergePipelineStage(aggregate);
+    if (!$merge)
+        return null;
+    const collectionName = typeof $merge.into === 'string' ? $merge.into : $merge.into.coll;
+    const model = aggregate.model();
+    const modelName = lodash.find(model.db.modelNames(), modelName => {
+        return model.db.models[modelName].collection.collectionName === collectionName;
+    });
+    const targetModel = modelName ? model.db.models[modelName] : null;
+    return targetModel;
+}
+function getMergePipelineStage(aggregate) {
+    const pipeline = aggregate.pipeline();
+    const $merge = lodash.last(pipeline).$merge;
+    return $merge ?? null;
+}
+function addMergeUpdateStage(aggregate, $set) {
+    const $merge = getMergePipelineStage(aggregate);
+    if (!$merge)
+        return;
+    if (typeof $merge.whenMatched === 'string') {
+        switch ($merge.whenMatched) {
+            case 'merge':
+                $merge.whenMatched = [{ $replaceRoot: { newRoot: { $mergeObjects: ['$$ROOT', '$$new'] } } }, { $set }];
+                break;
+            case 'replace':
+                $merge.whenMatched = [{ $replaceRoot: { newRoot: '$$new' } }, { $set }];
+                break;
+        }
+    }
+    else
+        $merge.whenMatched?.push({ $set });
 }

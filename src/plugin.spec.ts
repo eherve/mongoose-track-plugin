@@ -2,10 +2,9 @@
 
 import * as chai from 'chai';
 import * as chaiAsPromised from 'chai-as-promised';
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { v4 } from 'uuid';
 import { trackPlugin } from './plugin';
-import { inspect } from 'util';
 
 const mongoUrl = `mongodb://localhost:4242/test-datatable`;
 mongoose.set('strictQuery', false);
@@ -18,9 +17,10 @@ const embeddedSchema = new mongoose.Schema({
       onUpdate: data => {
         onUpdateData = data;
       },
-      onUpdateMetadata: {
+      metadata: {
         code: '$code',
       },
+      historizeCol: 'historized',
     },
   },
   stage: {
@@ -38,9 +38,10 @@ const schema = new mongoose.Schema({
       onUpdate: data => {
         onUpdateData = data;
       },
-      onUpdateMetadata: {
+      metadata: {
         code: '$code',
       },
+      historizeCol: 'historized',
     },
     enum: ['disponible', 'indisponible', 'précommande', 'erreur'],
   },
@@ -51,6 +52,7 @@ const schema = new mongoose.Schema({
       onUpdate: data => {
         onUpdateData = data;
       },
+      historizeCol: 'historized',
     },
   },
   description: String,
@@ -60,12 +62,11 @@ const schema = new mongoose.Schema({
         code: { type: String },
         status: {
           type: String,
-          // track: true,
           track: {
             onUpdate: data => {
               onUpdateData = data;
             },
-            onUpdateMetadata: {
+            metadata: {
               code: '$code',
               arrayCodes: '$array.code',
               arrayCode: '$$item.code',
@@ -103,95 +104,102 @@ describe('Track Lib', () => {
 
   describe('Initial value', () => {
     it('insert many on property', async () => {
-      await model.find().then(data => {
-        data.forEach(d => {
-          // console.log(d)
-          expect(d).to.not.be.null;
-          expect(d).to.have.property('status');
-          expect(d.statusInfo).to.not.be.null;
-          expect(d.statusInfo).to.have.property('value', d.status);
-        });
-      });
+      const data = await model.find();
+      for (let d of data) {
+        expect(d).to.not.be.null;
+        expect(d).to.have.property('status');
+        expect(d.statusInfo).to.not.be.null;
+        expect(d.statusInfo).to.have.property('value', d.status);
+        await checkHistorize(d._id, null, 'status', d.statusInfo);
+      }
     });
 
     it('insert many on embeded schema property', async () => {
-      await model.findOne({ code: 'A001' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.embeddedSchema).to.not.be.null;
-        expect(data.embeddedSchema).to.have.property('status', 'actif');
-        expect(data.embeddedSchema.statusInfo).to.not.be.null;
-        expect(data.embeddedSchema.statusInfo).to.have.property('value', 'actif');
-      });
+      const data = await model.findOne({ code: 'A001' });
+      expect(data).to.not.be.null;
+      expect(data.embeddedSchema).to.not.be.null;
+      expect(data.embeddedSchema).to.have.property('status', 'actif');
+      expect(data.embeddedSchema.statusInfo).to.not.be.null;
+      expect(data.embeddedSchema.statusInfo).to.have.property('value', 'actif');
+      await checkHistorize(data._id, data.embeddedSchema._id, 'embeddedSchema.status', data.embeddedSchema.statusInfo);
     });
 
     it('insert many on embeded schema array property', async () => {
-      await model.findOne({ code: 'A002' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.embeddedSchemaArray).to.not.be.null;
-        expect(data.embeddedSchemaArray[0]).to.not.be.null;
-        expect(data.embeddedSchemaArray[0]).to.have.property('status', 'en attente');
-        expect(data.embeddedSchemaArray[0].statusInfo).to.not.be.null;
-        expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('value', 'en attente');
-      });
+      const data = await model.findOne({ code: 'A002' });
+      expect(data).to.not.be.null;
+      expect(data.embeddedSchemaArray).to.not.be.null;
+      expect(data.embeddedSchemaArray[0]).to.not.be.null;
+      expect(data.embeddedSchemaArray[0]).to.have.property('status', 'en attente');
+      expect(data.embeddedSchemaArray[0].statusInfo).to.not.be.null;
+      expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('value', 'en attente');
+      await checkHistorize(
+        data._id,
+        data.embeddedSchemaArray[0]._id,
+        'embeddedSchemaArray.status',
+        data.embeddedSchemaArray[0].statusInfo
+      );
     });
 
     it('insert many on array property', async () => {
-      await model.findOne({ code: 'A004' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.array).to.not.be.null;
-        expect(data.array[0]).to.not.be.null;
-        expect(data.array[0]).to.have.property('status', 'en attente');
-        expect(data.array[0].statusInfo).to.not.be.null;
-        expect(data.array[0].statusInfo).to.have.property('value', 'en attente');
-      });
+      const data = await model.findOne({ code: 'A004' });
+      expect(data).to.not.be.null;
+      expect(data.array).to.not.be.null;
+      expect(data.array[0]).to.not.be.null;
+      expect(data.array[0]).to.have.property('status', 'en attente');
+      expect(data.array[0].statusInfo).to.not.be.null;
+      expect(data.array[0].statusInfo).to.have.property('value', 'en attente');
     });
 
     it('insert one on property', async () => {
-      await model.findOne({ code: 'A003' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data).to.have.property('status', 'précommande');
-        expect(data.statusInfo).to.not.be.null;
-        expect(data.statusInfo).to.have.property('value', 'précommande');
-      });
+      const data = await model.findOne({ code: 'A003' });
+      expect(data).to.not.be.null;
+      expect(data).to.have.property('status', 'précommande');
+      expect(data.statusInfo).to.not.be.null;
+      expect(data.statusInfo).to.have.property('value', 'précommande');
+      await checkHistorize(data._id, null, 'status', data.statusInfo);
     });
 
     it('insert one on embeded schema property', async () => {
-      await model.findOne({ code: 'A003' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.embeddedSchema).to.not.be.null;
-        expect(data.embeddedSchema).to.have.property('status', 'actif');
-        expect(data.embeddedSchema.statusInfo).to.not.be.null;
-        expect(data.embeddedSchema.statusInfo).to.have.property('value', 'actif');
-      });
+      const data = await model.findOne({ code: 'A003' });
+      expect(data).to.not.be.null;
+      expect(data.embeddedSchema).to.not.be.null;
+      expect(data.embeddedSchema).to.have.property('status', 'actif');
+      expect(data.embeddedSchema.statusInfo).to.not.be.null;
+      expect(data.embeddedSchema.statusInfo).to.have.property('value', 'actif');
+      await checkHistorize(data._id, data.embeddedSchema._id, 'embeddedSchema.status', data.embeddedSchema.statusInfo);
     });
 
     it('insert one on embeded schema array property', async () => {
-      await model.findOne({ code: 'A003' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.embeddedSchemaArray).to.not.be.null;
-        expect(data.embeddedSchemaArray[0]).to.not.be.null;
-        expect(data.embeddedSchemaArray[0]).to.have.property('status', 'en attente');
-        expect(data.embeddedSchemaArray[0].statusInfo).to.not.be.null;
-        expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('value', 'en attente');
-      });
+      const data = await model.findOne({ code: 'A003' });
+      expect(data).to.not.be.null;
+      expect(data.embeddedSchemaArray).to.not.be.null;
+      expect(data.embeddedSchemaArray[0]).to.not.be.null;
+      expect(data.embeddedSchemaArray[0]).to.have.property('status', 'en attente');
+      expect(data.embeddedSchemaArray[0].statusInfo).to.not.be.null;
+      expect(data.embeddedSchemaArray[0].statusInfo).to.have.property('value', 'en attente');
+      await checkHistorize(
+        data._id,
+        data.embeddedSchemaArray[0]._id,
+        'embeddedSchemaArray.status',
+        data.embeddedSchemaArray[0].statusInfo
+      );
     });
 
     it('insert one on array property', async () => {
-      await model.findOne({ code: 'A003' }).then(data => {
-        expect(data).to.not.be.null;
-        expect(data.array).to.not.be.null;
-        expect(data.array[0]).to.not.be.null;
-        expect(data.array[0]).to.have.property('status', 'en attente');
-        expect(data.array[0].statusInfo).to.not.be.null;
-        expect(data.array[0].statusInfo).to.have.property('value', 'en attente');
-      });
+      const data = await model.findOne({ code: 'A003' });
+      expect(data).to.not.be.null;
+      expect(data.array).to.not.be.null;
+      expect(data.array[0]).to.not.be.null;
+      expect(data.array[0]).to.have.property('status', 'en attente');
+      expect(data.array[0].statusInfo).to.not.be.null;
+      expect(data.array[0].statusInfo).to.have.property('value', 'en attente');
     });
   });
 
   describe('Update', () => {
     it('update one on property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).status;
+      const previous = await model.findOne(match);
       const value = v4();
       await model.updateOne(match, { $set: { status: value } });
       const data = await model.findOne(match);
@@ -199,18 +207,19 @@ describe('Track Lib', () => {
       expect(data).to.have.property('status', value);
       expect(data.statusInfo).to.not.be.null;
       expect(data.statusInfo).to.have.property('value', value);
-      expect(data.statusInfo).to.have.property('previousValue', previousValue);
+      expect(data.statusInfo).to.have.property('previousValue', previous.status);
       expect(onUpdateData).to.not.be.null;
       expect(onUpdateData[0]).to.not.be.null;
       expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
       expect(onUpdateData[0].update).to.not.be.null;
       expect(onUpdateData[0].update).to.have.property('value', value);
-      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previous.status);
+      await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
     });
 
     it('update one on embeded schema property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).embeddedSchema.status;
+      const previous = await model.findOne(match);
       const value = v4();
       await model.updateOne(match, [{ $set: { 'embeddedSchema.status': value } }]);
       const data = await model.findOne(match);
@@ -219,18 +228,26 @@ describe('Track Lib', () => {
       expect(data.embeddedSchema).to.have.property('status', value);
       expect(data.embeddedSchema.statusInfo).to.not.be.null;
       expect(data.embeddedSchema.statusInfo).to.have.property('value', value);
-      expect(data.embeddedSchema.statusInfo).to.have.property('previousValue', previousValue);
+      expect(data.embeddedSchema.statusInfo).to.have.property('previousValue', previous.embeddedSchema.status);
       expect(onUpdateData).to.not.be.null;
       expect(onUpdateData[0]).to.not.be.null;
       expect(onUpdateData[0]._id.toHexString()).to.be.equal(data._id.toHexString());
       expect(onUpdateData[0].update).to.not.be.null;
       expect(onUpdateData[0].update).to.have.property('value', value);
-      expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      expect(onUpdateData[0].update).to.have.property('previousValue', previous.embeddedSchema.status);
+      await checkHistorize(
+        data._id,
+        data.embeddedSchema._id,
+        'embeddedSchema.status',
+        data.embeddedSchema.statusInfo,
+        previous.embeddedSchema.statusInfo
+      );
     });
 
     it('update one on embeded schema array property', async () => {
       const match = { code: 'A002' };
-      const previousValue = (await model.findOne(match)).embeddedSchemaArray.find(e => e.code === 'X100').status;
+      const previous = await model.findOne(match);
+      const previousValue = previous.embeddedSchemaArray.find(e => e.code === 'X100').status;
       const value = v4();
       await model.updateOne(
         match,
@@ -252,6 +269,13 @@ describe('Track Lib', () => {
       expect(onUpdateData[0].update).to.have.length(1);
       expect(onUpdateData[0].update[0]).to.have.property('value', value);
       expect(onUpdateData[0].update[0]).to.have.property('previousValue', previousValue);
+      await checkHistorize(
+        data._id,
+        data.embeddedSchemaArray[0]._id,
+        'embeddedSchemaArray.status',
+        data.embeddedSchemaArray[0].statusInfo,
+        previous.embeddedSchemaArray[0].statusInfo
+      );
     });
 
     it('update one on array property', async () => {
@@ -284,7 +308,8 @@ describe('Track Lib', () => {
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
         expect(onUpdateData).to.not.be.null;
-        data.forEach((d, i) => {
+        let i = 0;
+        for (let d of data) {
           expect(d).to.not.be.null;
           expect(d).to.have.property('status', value);
           expect(d.statusInfo).to.not.be.null;
@@ -293,7 +318,9 @@ describe('Track Lib', () => {
           expect(onUpdateData[i]).to.not.be.null;
           expect(onUpdateData[i]._id.toHexString()).to.be.equal(d._id.toHexString());
           expect(onUpdateData[i].update).to.not.be.null;
-        });
+          await checkHistorize(d._id, null, 'status', d.statusInfo, previous[i].statusInfo);
+          ++i;
+        }
       });
     });
 
@@ -303,7 +330,7 @@ describe('Track Lib', () => {
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
-        data.forEach((d, i) => {
+        for (let d of data) {
           expect(d).to.not.be.null;
           expect(d.embeddedSchema).to.not.be.null;
           expect(d.embeddedSchema).to.have.property('status', 'inactif');
@@ -312,8 +339,17 @@ describe('Track Lib', () => {
           const prev = previous.find(p => p._id.equals(d._id));
           if (prev?.embeddedSchema?.status) {
             expect(d.embeddedSchema.statusInfo).to.have.property('previousValue', prev.embeddedSchema.status);
+            await checkHistorize(
+              d._id,
+              d.embeddedSchema._id,
+              'embeddedSchema.status',
+              d.embeddedSchema.statusInfo,
+              prev.embeddedSchema.statusInfo
+            );
+          } else {
+            await checkHistorize(d._id, null, 'embeddedSchema.status', d.embeddedSchema.statusInfo);
           }
-        });
+        }
       });
     });
 
@@ -323,16 +359,27 @@ describe('Track Lib', () => {
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
-        data.forEach((d, di) => {
+        let di = 0;
+        for (let d of data) {
           expect(d).to.not.be.null;
           if (!d.embeddedSchemaArray?.length) return;
-          d.embeddedSchemaArray.forEach((e, ei) => {
+          let ei = 0;
+          for (let e of d.embeddedSchemaArray) {
             expect(e).to.have.property('status', 'erreur');
             expect(e.statusInfo).to.not.be.null;
             expect(e.statusInfo).to.have.property('value', 'erreur');
             expect(e.statusInfo).to.have.property('previousValue', previous[di].embeddedSchemaArray[ei].status);
-          });
-        });
+            await checkHistorize(
+              d._id,
+              e._id,
+              'embeddedSchemaArray.status',
+              e.statusInfo,
+              previous[di].embeddedSchemaArray[ei].statusInfo
+            );
+            ++ei;
+          }
+          ++di;
+        }
       });
     });
 
@@ -371,6 +418,7 @@ describe('Track Lib', () => {
         expect(data.statusInfo).to.not.be.null;
         expect(data.statusInfo).to.have.property('value', 'test_bulk_one');
         expect(data.statusInfo).to.have.property('previousValue', previous.status);
+        await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
       });
     });
 
@@ -387,19 +435,23 @@ describe('Track Lib', () => {
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
-        data.forEach((d, i) => {
+        let i = 0;
+        for (let d of data) {
           expect(d).to.not.be.null;
           expect(d).to.have.property('status', 'test_bulk_many');
           expect(d.statusInfo).to.not.be.null;
           expect(d.statusInfo).to.have.property('value', 'test_bulk_many');
           expect(d.statusInfo).to.have.property('previousValue', previous[i].status);
-        });
+          await checkHistorize(d._id, null, 'status', d.statusInfo, previous[i].statusInfo);
+          ++i;
+        }
       });
     });
 
     it('aggregation merge with whenMatched pipeline on property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).status;
+      const previous = await model.findOne(match);
+      const previousValue = previous.status;
       const value = v4();
       await model.aggregate([
         { $match: match },
@@ -423,11 +475,13 @@ describe('Track Lib', () => {
       expect(onUpdateData[0].update).to.not.be.null;
       expect(onUpdateData[0].update).to.have.property('value', value);
       expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
     });
 
     it('aggregation merge with whenMatched as merge on property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).status;
+      const previous = await model.findOne(match);
+      const previousValue = previous.status;
       const value = v4();
       await model.aggregate([
         { $match: match },
@@ -452,11 +506,13 @@ describe('Track Lib', () => {
       expect(onUpdateData[0].update).to.not.be.null;
       expect(onUpdateData[0].update).to.have.property('value', value);
       expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
     });
 
     it('aggregation merge with whenMatched as replace on property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).status;
+      const previous = await model.findOne(match);
+      const previousValue = previous.status;
       const value = v4();
       await model.aggregate([
         { $match: match },
@@ -481,13 +537,15 @@ describe('Track Lib', () => {
       expect(onUpdateData[0].update).to.not.be.null;
       expect(onUpdateData[0].update).to.have.property('value', value);
       expect(onUpdateData[0].update).to.have.property('previousValue', previousValue);
+      await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
     });
   });
 
   describe('Update with origin', () => {
     it('update one on property with schema origin', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).stage;
+      const previous = await model.findOne(match);
+      const previousValue = previous.stage;
       await model.updateOne(match, { $set: { stage: 'schema-origin' } }).then(async () => {
         const data = await model.findOne(match);
         expect(data).to.not.be.null;
@@ -496,26 +554,31 @@ describe('Track Lib', () => {
         expect(data.stageInfo).to.have.property('value', 'schema-origin');
         expect(data.stageInfo).to.have.property('previousValue', previousValue);
         expect(data.stageInfo).to.have.property('origin', 'schema-origin');
+        await checkHistorize(data._id, null, 'stage', data.stageInfo, previous.stageInfo);
       });
     });
 
     it('update one on property', async () => {
       const match = { code: 'A001' };
-      const previousValue = (await model.findOne(match)).stage;
-      await model.updateOne(match, { $set: { stage: 'update-one' } }, { origin: 'update-one' }).then(async () => {
+      const previous = await model.findOne(match);
+      const previousValue = previous.stage;
+      const origin = v4();
+      await model.updateOne(match, { $set: { stage: 'update-one' } }, { origin }).then(async () => {
         const data = await model.findOne(match);
         expect(data).to.not.be.null;
         expect(data).to.have.property('stage', 'update-one');
         expect(data.stageInfo).to.not.be.null;
         expect(data.stageInfo).to.have.property('value', 'update-one');
         expect(data.stageInfo).to.have.property('previousValue', previousValue);
-        expect(data.stageInfo).to.have.property('origin', 'update-one');
+        expect(data.stageInfo).to.have.property('origin', origin);
+        await checkHistorize(data._id, null, 'stage', data.stageInfo, previous.stageInfo);
       });
     });
 
     it('update one on embeded schema property', async () => {
+      const origin = v4();
       await model
-        .updateOne({ code: 'A001' }, { $set: { 'embeddedSchema.stage': 'update-one' } }, { origin: 'update-one' })
+        .updateOne({ code: 'A001' }, { $set: { 'embeddedSchema.stage': 'update-one' } }, { origin })
         .then(async () => {
           const data = await model.findOne({ code: 'A001' });
           expect(data).to.not.be.null;
@@ -524,16 +587,17 @@ describe('Track Lib', () => {
           expect(data.embeddedSchema.stageInfo).to.not.be.null;
           expect(data.embeddedSchema.stageInfo).to.have.property('value', 'update-one');
           expect(data.embeddedSchema.stageInfo).to.have.property('previousValue', 'init');
-          expect(data.embeddedSchema.stageInfo).to.have.property('origin', 'update-one');
+          expect(data.embeddedSchema.stageInfo).to.have.property('origin', origin);
         });
     });
 
     it('update one on embeded schema array property', async () => {
+      const origin = v4();
       await model
         .updateOne(
           { code: 'A002' },
           { $set: { 'embeddedSchemaArray.$[elmt].stage': 'update-one' } },
-          { arrayFilters: [{ 'elmt.code': 'X100' }], origin: 'update-one' }
+          { arrayFilters: [{ 'elmt.code': 'X100' }], origin }
         )
         .then(async () => {
           const data = await model.findOne({ code: 'A002' });
@@ -544,16 +608,17 @@ describe('Track Lib', () => {
           expect(data.embeddedSchemaArray[0].stageInfo).to.not.be.null;
           expect(data.embeddedSchemaArray[0].stageInfo).to.have.property('value', 'update-one');
           expect(data.embeddedSchemaArray[0].stageInfo).to.have.property('previousValue', 'init');
-          expect(data.embeddedSchemaArray[0].stageInfo).to.have.property('origin', 'update-one');
+          expect(data.embeddedSchemaArray[0].stageInfo).to.have.property('origin', origin);
         });
     });
 
     it('update one on array property', async () => {
+      const origin = v4();
       await model
         .updateOne(
           { code: 'A004' },
           { $set: { 'array.$[elmt].stage': 'update-one' } },
-          { arrayFilters: [{ 'elmt.code': 'X100' }], origin: 'update-one' }
+          { arrayFilters: [{ 'elmt.code': 'X100' }], origin }
         )
         .then(async () => {
           const data = await model.findOne({ code: 'A004' });
@@ -564,13 +629,14 @@ describe('Track Lib', () => {
           expect(data.array[0].stageInfo).to.not.be.null;
           expect(data.array[0].stageInfo).to.have.property('value', 'update-one');
           expect(data.array[0].stageInfo).to.have.property('previousValue', 'init');
-          expect(data.array[0].stageInfo).to.have.property('origin', 'update-one');
+          expect(data.array[0].stageInfo).to.have.property('origin', origin);
         });
     });
 
     it('update many on property', async () => {
       await model.find({}).then(async previous => {
-        await model.updateMany({}, { $set: { stage: 'update-many' } }, { origin: 'update-one' });
+        const origin = v4();
+        await model.updateMany({}, { $set: { stage: 'update-many' } }, { origin });
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
@@ -580,14 +646,15 @@ describe('Track Lib', () => {
           expect(d.stageInfo).to.not.be.null;
           expect(d.stageInfo).to.have.property('value', 'update-many');
           expect(d.stageInfo).to.have.property('previousValue', previous[i].stage);
-          expect(d.stageInfo).to.have.property('origin', 'update-one');
+          expect(d.stageInfo).to.have.property('origin', origin);
         });
       });
     });
 
     it('update many on embeded schema property', async () => {
       await model.find({}).then(async previous => {
-        await model.updateMany({}, { $set: { 'embeddedSchema.stage': 'update-many' } }, { origin: 'update-one' });
+        const origin = v4();
+        await model.updateMany({}, { $set: { 'embeddedSchema.stage': 'update-many' } }, { origin });
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
@@ -600,18 +667,15 @@ describe('Track Lib', () => {
           if (previous[i].embeddedSchema?.stage) {
             expect(d.embeddedSchema.stageInfo).to.have.property('previousValue', previous[i].embeddedSchema?.stage);
           }
-          expect(d.embeddedSchema.stageInfo).to.have.property('origin', 'update-one');
+          expect(d.embeddedSchema.stageInfo).to.have.property('origin', origin);
         });
       });
     });
 
     it('update many on embeded schema array property', async () => {
       await model.find({}).then(async previous => {
-        await model.updateMany(
-          {},
-          { $set: { 'embeddedSchemaArray.$[].stage': 'update-many' } },
-          { origin: 'update-one' }
-        );
+        const origin = v4();
+        await model.updateMany({}, { $set: { 'embeddedSchemaArray.$[].stage': 'update-many' } }, { origin });
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
@@ -623,7 +687,7 @@ describe('Track Lib', () => {
             expect(e.stageInfo).to.not.be.null;
             expect(e.stageInfo).to.have.property('value', 'update-many');
             expect(e.stageInfo).to.have.property('previousValue', previous[di].embeddedSchemaArray[ei].stage);
-            expect(e.stageInfo).to.have.property('origin', 'update-one');
+            expect(e.stageInfo).to.have.property('origin', origin);
           });
         });
       });
@@ -631,7 +695,8 @@ describe('Track Lib', () => {
 
     it('update many on array property', async () => {
       await model.find({}).then(async previous => {
-        await model.updateMany({}, { $set: { 'array.$[].stage': 'update-many' } }, { origin: 'update-one' });
+        const origin = v4();
+        await model.updateMany({}, { $set: { 'array.$[].stage': 'update-many' } }, { origin });
         const data = await model.find({});
         expect(data).to.not.be.null;
         expect(data).to.have.property('length').greaterThan(0);
@@ -643,10 +708,61 @@ describe('Track Lib', () => {
             expect(e.stageInfo).to.not.be.null;
             expect(e.stageInfo).to.have.property('value', 'update-many');
             expect(e.stageInfo).to.have.property('previousValue', previous[di].array[ei].stage);
-            expect(e.stageInfo).to.have.property('origin', 'update-one');
+            expect(e.stageInfo).to.have.property('origin', origin);
           });
         });
       });
+    });
+
+    it('bulk update one on property', async () => {
+      await model.findOne({ code: 'A001' }).then(async previous => {
+        const origin = v4();
+        await model.bulkWrite(
+          [
+            {
+              updateOne: {
+                filter: { _id: previous._id },
+                update: { $set: { stage: 'test_bulk_one' } },
+              },
+            },
+          ],
+          { origin }
+        );
+        const data = await model.findOne({ code: 'A001' });
+        expect(data).to.not.be.null;
+        expect(data).to.have.property('stage', 'test_bulk_one');
+        expect(data.stageInfo).to.not.be.null;
+        expect(data.stageInfo).to.have.property('value', 'test_bulk_one');
+        expect(data.stageInfo).to.have.property('previousValue', previous.stage);
+        expect(data.stageInfo).to.have.property('origin', origin);
+      });
+    });
+
+    it('aggregation merge with whenMatched pipeline on property', async () => {
+      const match = { code: 'A001' };
+      const previousValue = (await model.findOne(match)).stage;
+      const value = v4();
+      const origin = v4();
+      await model.aggregate(
+        [
+          { $match: match },
+          {
+            $merge: {
+              into: model.collection.collectionName,
+              whenNotMatched: 'discard',
+              whenMatched: [{ $set: { stage: value } }],
+            },
+          },
+        ],
+        { origin }
+      );
+      const data = await model.findOne(match);
+      expect(data).to.not.be.null;
+      expect(data).to.have.property('stage', value);
+      expect(data.stageInfo).to.not.be.null;
+      expect(data.stageInfo).to.have.property('value', value);
+      expect(data.stageInfo).to.have.property('previousValue', previousValue);
+      expect(data.stageInfo).to.have.property('origin', origin);
     });
   });
 
@@ -655,8 +771,43 @@ describe('Track Lib', () => {
   });
 });
 
+async function checkHistorize(
+  entityId: Types.ObjectId,
+  itemId: Types.ObjectId | null,
+  path: string,
+  info: any,
+  previousInfo?: any
+) {
+  let h;
+  if (previousInfo) {
+    h = await model.db.collection('historized').findOne({
+      entityId,
+      itemId,
+      path,
+      end: info.updatedAt,
+    });
+    expect(h).to.not.be.null;
+    expect(h).to.have.property('value', previousInfo.value);
+    expect(h.previousValue).to.be.undefined;
+    expect(h!.start.valueOf()).to.be.equal(previousInfo.updatedAt.valueOf());
+    expect(h.origin).to.be.equal(previousInfo.origin);
+  }
+  h = await model.db.collection('historized').findOne({
+    entityId,
+    itemId,
+    path,
+    end: null,
+  });
+  expect(h).to.not.be.null;
+  expect(h.value).to.be.equal(info.value);
+  expect(h.previousValue).to.be.equal(info.previousValue);
+  expect(h!.start.valueOf()).to.be.equal(info.updatedAt.valueOf());
+  expect(h.origin).to.be.equal(info.origin);
+}
+
 async function reset(): Promise<void> {
   await model.deleteMany();
+  await model.db.collection('historize').deleteMany();
   await seed();
 }
 
@@ -673,6 +824,18 @@ async function seed(): Promise<void> {
           status: 'actif',
           stage: 'init',
         },
+        embeddedSchemaArray: [
+          {
+            code: 'X100',
+            status: 'en attente',
+            stage: 'init',
+          },
+          {
+            code: 'X101',
+            status: 'validé',
+            stage: 'init',
+          },
+        ],
       },
       {
         code: 'A002',

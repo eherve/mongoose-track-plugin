@@ -1,33 +1,102 @@
 /** @format */
 
 import { updateToPipeline } from '@eherve/mongoose-update-to-pipeline';
+import { AsyncLocalStorage } from 'async_hooks';
 import * as lodash from 'lodash';
-import {
+import mongoose, {
   Aggregate,
+  AnyBulkWriteOperation,
   CallbackWithoutResultAndOptionalError,
   ClientSession,
+  CompileModelOptions,
   FilterQuery,
   Model,
-  PipelineStage,
+  MongooseBulkWriteOptions,
   Query,
   Schema,
   SchemaType,
   SchemaTypes,
+  Types,
   UpdateQuery,
 } from 'mongoose';
-import { hasQueryFieldUpdate } from './update-tools';
+import { inspect } from 'util';
+import { v4 } from 'uuid';
+import { addMergeUpdateStage, getAggregateTargetModel, hasQueryFieldUpdate } from './update-tools';
+
+declare module 'mongoose' {
+  interface Schema {
+    options?: SchemaOptions;
+  }
+  interface MongooseBulkWriteOptions {
+    skipTrackPlugin?: boolean;
+    origin?: any;
+  }
+}
+
+const asyncStorage = new AsyncLocalStorage<{
+  model: Model<any>;
+  v: string;
+  session?: ClientSession | null;
+}>();
+
+const _model = mongoose.model;
+mongoose.model = function <TSchema extends Schema = any>(
+  name: string,
+  schema?: TSchema,
+  collection?: string,
+  options?: CompileModelOptions
+): any {
+  const model: Model<any> = _model.call(this, name, schema, collection, options) as any;
+  if (schema) {
+    const create: any = model.create;
+    model.create = function (this: Model<any>, doc: any, options?: any) {
+      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
+        create.call(this, doc, options)
+      );
+    } as any;
+    const insertMany: any = model.insertMany;
+    model.insertMany = function (this: Model<any>, doc: any, options?: any) {
+      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
+        insertMany.call(this, doc, options)
+      );
+    } as any;
+    const bulkWrite = model.bulkWrite;
+    model.bulkWrite = function (
+      writes: Array<AnyBulkWriteOperation<any>>,
+      options?: MongooseBulkWriteOptions & { ordered: false }
+    ) {
+      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
+        bulkWrite.call(this, writes, options)
+      );
+    };
+  }
+  return model;
+};
+
+export interface IHistorize<T> {
+  entityId: Types.ObjectId;
+  itemId?: Types.ObjectId;
+  path: string;
+  start: Date;
+  end: Date | null;
+  value?: T;
+  previousValue?: T;
+  origin?: any;
+  metadata?: any;
+}
 
 export type FieldUpdateInfo<T> = {
   value: T | null;
   previousValue: T | null;
   updatedAt: Date;
-  previousUpdatedAt: Date | undefined;
   origin: any;
 };
 
 export type TrackPluginOptions = {
   logger?: { debug: (...args: any) => void };
 };
+
+type UpdatedData<T> = FieldUpdateInfo<T> & { itemId: Types.ObjectId; metadata?: any };
 
 type Field = {
   path: string;
@@ -36,12 +105,13 @@ type Field = {
   infoPath: string;
   arrays?: string[];
   origin?: () => any;
-  onUpdate?: <T = any>(updated: { _id: string; update: FieldUpdateInfo<T> }[]) => void;
-  onUpdateMetadata?: any;
+  onUpdate?: <T = any>(updated: { _id: string; path: string; update: UpdatedData<T> }[]) => void;
+  metadata?: any;
+  historizeCol?: string;
 };
 
 export const trackPlugin = function (schema: Schema) {
-  const fields = getTrackSchemaFields(schema);
+  const fields = getSchemaFields(schema);
   if (!fields.length) return;
   lodash.each(fields, field => addFieldInfoSchemaPath(schema, field));
   registerMiddleWare(schema, fields);
@@ -49,34 +119,30 @@ export const trackPlugin = function (schema: Schema) {
 
 function registerMiddleWare(schema: Schema, fields: Field[]) {
   schema.pre('save', async function (this: any, options?: any) {
-    lodash.forEach(fields, field => addInitialValue(this, field.path, options?.origin));
+    lodash.forEach(fields, field => addInitialValue(this, field.path, asyncStorage.getStore()!.v, options?.origin));
   });
-  // TODO should it be triggered on insert ?
-  // schema.post('save', async function (this: Model<any>, data: any, next: CallbackWithoutResultAndOptionalError) {
-  //   lodash.forEach(fields, field => {
-  //     if (typeof field.onUpdate !== 'function') return;
-  //     field.onUpdate([{ _id: data._id, update: lodash.get(data, field.infoPath) }]);
-  //   });
-  //   next();
-  // });
+  schema.post('save', async function (this: any) {
+    const store = asyncStorage.getStore();
+    if (!store) return;
+    await processPostUpdate(fields, store.model, store.v, store.session);
+  });
 
   schema.pre(
     'insertMany',
     async function (this: Model<any>, next: CallbackWithoutResultAndOptionalError, docs: any[], options?: any) {
       if (options.skipTrackPlugin) return next();
       if (!Array.isArray(docs) || docs.length === 0) return next();
-      lodash.forEach(docs, doc => lodash.forEach(fields, field => addInitialValue(doc, field.path, options?.origin)));
+      lodash.forEach(docs, doc =>
+        lodash.forEach(fields, field => addInitialValue(doc, field.path, asyncStorage.getStore()!.v, options?.origin))
+      );
       return next();
     }
   );
-  // TODO should it be triggered on insert ?
-  // schema.post('insertMany', async function (this: Model<any>, data: any, next: CallbackWithoutResultAndOptionalError) {
-  //   lodash.forEach(fields, field => {
-  //     if (typeof field.onUpdate !== 'function') return;
-  //     field.onUpdate(lodash.map(data, r => ({ _id: r._id, update: lodash.get(r, field.infoPath) })));
-  //   });
-  //   next();
-  // });
+  schema.post('insertMany', async function (this: Model<any>) {
+    const store = asyncStorage.getStore();
+    if (!store) return;
+    await processPostUpdate(fields, this, store.v, store.session);
+  });
 
   schema.pre(
     'bulkWrite',
@@ -87,7 +153,14 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
         if (operation.updateOne) block = operation.updateOne;
         else if (operation.updateMany) block = operation.updateMany;
         else return;
-        const update = consolidateUpdate(fields, options, block.filter, block.update, block.arrayFilters);
+        const update = consolidateUpdate(
+          fields,
+          asyncStorage.getStore()!.v,
+          options,
+          block.filter,
+          block.update,
+          block.arrayFilters
+        );
         if (!update) return;
         block.update = update;
       });
@@ -96,7 +169,7 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
   );
   schema.post('bulkWrite', async function (this: Model<any>, res: any) {
     if (!res.modifiedCount && !res.upsertedCount) return;
-    await processOnUpdateFields(fields, this);
+    await processPostUpdate(fields, this, asyncStorage.getStore()!.v, asyncStorage.getStore()?.session);
   });
 
   schema.pre(
@@ -106,7 +179,15 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
       if (options.skipTrackPlugin) return;
       const queryUpdate = this.getUpdate();
       if (!queryUpdate) return;
-      const update = consolidateUpdate(fields, options, this.getFilter(), this.getUpdate(), options.arrayFilters);
+      this['trachPluginV'] = v4();
+      const update = consolidateUpdate(
+        fields,
+        this['trachPluginV'],
+        options,
+        this.getFilter(),
+        this.getUpdate(),
+        options.arrayFilters
+      );
       if (update) this.setUpdate(update);
     }
   );
@@ -114,101 +195,150 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
     const options = this.getOptions();
     if (options.skipTrackPlugin) return;
     if (!res.modifiedCount && !res.upsertedCount) return;
-    await processOnUpdateFields(fields, this.model, options.session);
+    await processPostUpdate(fields, this.model, this['trachPluginV'], options.session);
   });
 
-  schema.pre('aggregate', function (this: Aggregate<any>, next: CallbackWithoutResultAndOptionalError, options?: any) {
-    if (options?.skipTrackPlugin) return next();
-    const targetModel = getAggregateTargetModel(this);
-    if (!targetModel) return next();
-    const pipeline = this.pipeline();
-    const $merge: PipelineStage.Merge['$merge'] = (lodash.last(pipeline) as any).$merge;
-    const fields = getTrackSchemaFields(targetModel?.schema);
-    if (!fields.length) return next();
-    if (typeof $merge.whenMatched === 'string') {
-      switch ($merge.whenMatched) {
-        case 'merge':
-          $merge.whenMatched = [
-            { $replaceRoot: { newRoot: { $mergeObjects: ['$$ROOT', '$$new'] } } },
-            { $set: buildSetUpdate(fields, options) },
-          ];
-          break;
-        case 'replace':
-          $merge.whenMatched = [{ $replaceRoot: { newRoot: '$$new' } }, { $set: buildSetUpdate(fields, options) }];
-          break;
-      }
-    } else {
-      $merge.whenMatched?.push({ $set: buildSetUpdate(fields, options) });
-    }
-    return next();
-  });
-
-  schema.post('aggregate', async function (this: Aggregate<any>, options?: any) {
-    if (options?.skipTrackPlugin) return;
+  schema.pre('aggregate', async function (this: Aggregate<any>) {
+    if (this.options.skipTrackPlugin) return;
     const targetModel = getAggregateTargetModel(this);
     if (!targetModel) return;
-    const fields = getTrackSchemaFields(targetModel?.schema);
+    const fields = getSchemaFields(targetModel?.schema);
     if (!fields.length) return;
-    await processOnUpdateFields(fields, targetModel, options?.session);
+    this['trachPluginV'] = v4();
+    addMergeUpdateStage(this, buildSetUpdate(fields, this['trachPluginV'], this.options));
+  });
+
+  schema.post('aggregate', async function (this: Aggregate<any>) {
+    if (this.options?.skipTrackPlugin) return;
+    const targetModel = getAggregateTargetModel(this);
+    if (!targetModel) return;
+    const fields = getSchemaFields(targetModel?.schema);
+    if (!fields.length) return;
+    await processPostUpdate(fields, targetModel, this['trachPluginV'], this.options.session);
   });
 }
 
-function getAggregateTargetModel(aggregate: Aggregate<any>): Model<any> | null {
-  const pipeline = aggregate.pipeline();
-  const mergeStage: PipelineStage.Merge = lodash.last(pipeline) as any;
-  if (!mergeStage?.$merge) return null;
-  const collectionName =
-    typeof mergeStage.$merge.into === 'string' ? mergeStage.$merge.into : mergeStage.$merge.into.coll;
-  const model = aggregate.model();
-  const modelName = lodash.find(model.db.modelNames(), modelName => {
-    return model.db.models[modelName].collection.collectionName === collectionName;
-  });
-  const targetModel = modelName ? model.db.models[modelName] : null;
-  return targetModel;
+async function processPostUpdate(fields: Field[], model: Model<any>, v: string, session: ClientSession | null = null) {
+  const toProcessFields = lodash.filter(fields, field => typeof field.onUpdate === 'function' || !!field.historizeCol);
+  if (!toProcessFields.length) return [];
+  const data = await getOnUpdateFieldsData(toProcessFields, model, v, session);
+  if (!data?.length) return;
+  processOnUpdate(toProcessFields, data);
+  await processHistorized(toProcessFields, model, data, session);
 }
 
-async function processOnUpdateFields(fields: Field[], model: Model<any>, session: ClientSession | null = null) {
-  const fieldsWithOnUpdate = lodash.filter(fields, field => typeof field.onUpdate === 'function');
-  if (!fieldsWithOnUpdate.length) return;
+function processOnUpdate(fields: Field[], data: any[]) {
+  lodash.forEach(fields, field => {
+    if (typeof field.onUpdate !== 'function') return;
+    const updated: any = [];
+    lodash.each(data, d => {
+      const update = lodash.get(d, field.path.replace('.', '_'));
+      if (!update || (Array.isArray(update) && update.length === 0)) return;
+      updated.push({ _id: d._id, path: field.path, update });
+    });
+    if (!updated.length) return;
+    if (typeof field.onUpdate === 'function') field.onUpdate(updated);
+  });
+}
 
+async function processHistorized(
+  fields: Field[],
+  model: Model<any>,
+  data: any[],
+  session: ClientSession | null = null,
+  log: boolean = false
+) {
+  const bulkInfo: { col: string; operations: AnyBulkWriteOperation<any>[] }[] = [];
+  for (let field of fields) {
+    if (!field.historizeCol) continue;
+    for (let d of data) {
+      if (log) console.log(d);
+      const update = lodash.get(d, field.path.replace('.', '_'));
+      // if (!update || (Array.isArray(update) && update.length === 0)) continue;
+      let bi = lodash.find(bulkInfo, { col: field.historizeCol });
+      if (!bi) bulkInfo.push((bi = { col: field.historizeCol, operations: [] }));
+      if (Array.isArray(update)) {
+        lodash.forEach(update, u => bi.operations.push(...buildHistorizeOperation(field, d._id, u)));
+      } else bi.operations.push(...buildHistorizeOperation(field, d._id, update));
+    }
+  }
+  if (bulkInfo.length) {
+    for (let i of bulkInfo) {
+      if (log) console.log(inspect(i.operations, false, null, true));
+      await model.db.collection(i.col).bulkWrite(i.operations as any, { ordered: true, session: session ?? undefined });
+    }
+  }
+}
+
+function buildHistorizeOperation(field: Field, entityId: any, update: UpdatedData<any>): AnyBulkWriteOperation<any>[] {
+  const start = update?.updatedAt ?? new Date();
+  const document: IHistorize<any> = { entityId: entityId, path: field.path, start, end: null };
+  const filter: FilterQuery<IHistorize<any>> = { entityId: entityId, path: field.path, end: null };
+  if (update?.itemId !== undefined) document.itemId = filter.itemId = update.itemId;
+  if (update?.value !== undefined) document.value = update.value;
+  if (update?.previousValue !== undefined) document.previousValue = update.previousValue;
+  if (update?.origin !== undefined) document.origin = update.origin;
+  if (update?.metadata !== undefined) document.metadata = update.metadata;
+  return [
+    {
+      updateOne: {
+        filter,
+        update: [
+          {
+            $set: {
+              end: start,
+              duration: { $dateDiff: { startDate: '$start', endDate: start, unit: 'millisecond' } },
+            },
+          },
+        ],
+      },
+    },
+    { insertOne: { document } },
+  ];
+}
+
+async function getOnUpdateFieldsData(
+  fieldsWithOnUpdate: Field[],
+  model: Model<any>,
+  v: string,
+  session: ClientSession | null = null
+): Promise<any[]> {
   const filter: FilterQuery<any> = { $or: [] };
   const projection: any = {};
-  const update: any = { $set: {} };
 
   lodash.each(fieldsWithOnUpdate, field => {
-    filter.$or!.push({ [`${field.infoPath}.triggerOnUpdate`]: true });
+    filter.$or!.push({ [`${field.infoPath}.v`]: v });
     const chunks = lodash.split(field.infoPath, '.');
     const infoField = lodash.last(chunks);
     const projectionPath = chunks.length > 1 ? lodash.join(lodash.slice(chunks, 0, -1)) : '$ROOT';
     if (field.arrays?.length) {
-      if (field.arrays.length > 1)
-        return console.warn(`unmanaged on update trigger on  array of array (${field.path})`);
-      lodash.merge(update.$set, buildOnUpdateFieldsArrayPart(field, field.path));
+      if (field.arrays.length > 1) {
+        return console.warn(`unmanaged on update trigger on array of array (${field.path})`);
+      }
       projection[field.path.replace('.', '_')] = {
         $map: {
           input: {
             $filter: {
               input: `$${projectionPath}`,
               as: 'item',
-              cond: { $eq: [`$$item.${infoField}.triggerOnUpdate`, true] },
+              cond: { $eq: [`$$item.${infoField}.v`, v] },
             },
           },
           as: 'item',
           in: {
-            $mergeObjects: [`$$item.${infoField}`, { itemId: '$$item._id' }, { metadata: field.onUpdateMetadata }],
+            $mergeObjects: [`$$item.${infoField}`, { itemId: '$$item._id' }, { metadata: field.metadata }],
           },
         },
       };
     } else {
-      update.$set[`${field.infoPath}.triggerOnUpdate`] = false;
       projection[field.path.replace('.', '_')] = {
         $cond: {
-          if: { $eq: [`$${field.infoPath}.triggerOnUpdate`, true] },
+          if: { $eq: [`$${field.infoPath}.v`, v] },
           then: {
             $mergeObjects: [
               `$${field.infoPath}`,
-              { itemId: `$${projectionPath}._id` },
-              { metadata: field.onUpdateMetadata },
+              { itemId: projectionPath !== '$ROOT' ? `$${projectionPath}._id` : null },
+              { metadata: field.metadata },
             ],
           },
           else: null,
@@ -221,82 +351,33 @@ async function processOnUpdateFields(fields: Field[], model: Model<any>, session
     .find(filter, projection)
     .lean<any>()
     .session(session ?? null);
-  await model.updateMany(filter, [update], { skipTrackPlugin: true }).session(session ?? null);
-
-  lodash.forEach(fieldsWithOnUpdate, field => {
-    const updated: any = [];
-    lodash.each(data, d => {
-      let update = lodash.get(d, field.path.replace('.', '_'));
-      if (!update) return;
-      if (Array.isArray(update) && update.length === 0) return;
-      updated.push({ _id: d._id, path: field.path, update });
-    });
-    if (!updated.length) return;
-    field.onUpdate!(updated);
-  });
+  return data;
 }
 
-function buildOnUpdateFieldsArrayPart(field: Field, subpath: string, item?: string): any {
-  if (!subpath.length) return { triggerOnUpdate: false };
-  let key: string = '';
-  const chunks = lodash.split(subpath, '.');
-  for (let chunk of chunks) {
-    key = key.length ? `${key}.${chunk}` : chunk;
-    if (!!lodash.find(field.arrays, a => a === chunk)) {
-      const subItem = item ? `${item}_${key}Elmt` : `${key}Elmt`;
-      return {
-        [key]: {
-          $map: {
-            input: `$${item ?? key}`,
-            as: subItem,
-            in: {
-              $mergeObjects: [
-                `$$${subItem}`,
-                buildOnUpdateFieldsArrayPart(field, subpath.slice(key.length + 1), subItem),
-              ],
-            },
-          },
-        },
-      };
-    }
-    if (item) {
-      const subItem = chunks.length === 1 ? `${key}Info` : key;
-      return {
-        [subItem]: {
-          $mergeObjects: [
-            `$$${item}.${subItem}`,
-            buildOnUpdateFieldsArrayPart(field, subpath.slice(key.length + 1), item ? `${item}.key` : `$${key}`),
-          ],
-        },
-      };
-    }
-  }
-  return { [key]: { triggerOnUpdate: false } };
-}
-
-function addInitialValue(doc: any, path: string, origin: any) {
+function addInitialValue(doc: any, path: string, v: string, origin: any) {
   let subDoc = doc;
   const chunks: string[] = lodash.split(path, '.');
   const head = lodash.head(chunks)!;
   if (chunks.length === 1) {
-    subDoc[`${head}Info`] = { value: subDoc[head], updatedAt: new Date(), origin };
+    subDoc[`${head}Info`] = { value: subDoc[head], updatedAt: new Date(), origin, v };
   } else if (Array.isArray(subDoc[head])) {
-    lodash.forEach(subDoc[head], d => addInitialValue(d, lodash.join(lodash.slice(chunks, 1), '.'), origin));
+    lodash.forEach(subDoc[head], d => addInitialValue(d, lodash.join(lodash.slice(chunks, 1), '.'), v, origin));
   } else if (typeof subDoc[head] === 'object') {
-    addInitialValue(subDoc[head], lodash.join(lodash.slice(chunks, 1), '.'), origin);
+    addInitialValue(subDoc[head], lodash.join(lodash.slice(chunks, 1), '.'), v, origin);
   }
 }
 
-function buildSetUpdate(fields: Field[], options: any | undefined): any {
+function buildSetUpdate(fields: Field[], v: string, options: any | undefined): any {
   const $set: any = {};
   lodash.each(fields, field =>
-    lodash.merge($set, buildUpdate(field, options?.origin ?? (field.origin ? field.origin() : undefined)))
+    lodash.merge($set, buildUpdate(field, v, options?.origin ?? (field.origin ? field.origin() : undefined)))
   );
   return $set;
 }
 
 function consolidateUpdate(
   fields: Field[],
+  v: string,
   options: any,
   filter: any,
   update: any,
@@ -304,7 +385,7 @@ function consolidateUpdate(
 ): any[] | null {
   const updatedFields = lodash.filter(fields, field => hasQueryFieldUpdate(update, field.path));
   if (!updatedFields.length) return null;
-  const $set = buildSetUpdate(updatedFields, options);
+  const $set = buildSetUpdate(updatedFields, v, options);
   if (Array.isArray(update)) {
     update.push({ $set });
     return update;
@@ -328,16 +409,15 @@ function addFieldInfoSchemaPath(schema: Schema, field: Field) {
       value: valueType,
       previousValue: valueType,
       updatedAt: { type: Date },
-      previousUpdatedAt: { type: Date },
       origin: { type: SchemaTypes.Mixed },
-      triggerOnUpdate: { type: Boolean },
+      v: { type: String },
     };
     if (info?.schema) info.schema.path(field.infoPath.substring(schemaPath.length + 1), { type });
     else schema.path(field.infoPath, { type });
   }
 }
 
-function getTrackSchemaFields(schema: Schema, parentPath?: string, arrays?: string[]): Field[] {
+function getSchemaFields(schema: Schema, parentPath?: string, arrays?: string[]): Field[] {
   const fields: Field[] = [];
   lodash.each(lodash.keys(schema.paths), key => {
     const schemaType = schema.path(key);
@@ -345,12 +425,12 @@ function getTrackSchemaFields(schema: Schema, parentPath?: string, arrays?: stri
     switch (schemaType.instance) {
       case 'Embedded':
         if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays));
-        else fields.push(...getTrackSchemaFields(schemaType.schema, path, arrays));
+        else fields.push(...getSchemaFields(schemaType.schema, path, arrays));
         break;
       case 'Array':
         if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays));
         else if (schemaType.schema) {
-          fields.push(...getTrackSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key])));
+          fields.push(...getSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key])));
         }
         break;
       default:
@@ -370,17 +450,18 @@ function buildField(schemaType: SchemaType, name: string, path: string, arrays: 
     arrays,
     origin: schemaType.options.track.origin,
     onUpdate: schemaType.options.track.onUpdate,
-    onUpdateMetadata: schemaType.options.track.onUpdateMetadata,
+    metadata: schemaType.options.track.metadata,
+    historizeCol: schemaType.options.track.historizeCol,
   };
   return field;
 }
 
-function buildUpdate(field: Field, origin: any): UpdateQuery<any> {
-  if (field.arrays?.length) return buildArrayFieldUpdate(field, origin);
-  return buildFieldUpdate(field, origin);
+function buildUpdate(field: Field, v: string, origin: any): UpdateQuery<any> {
+  if (field.arrays?.length) return buildArrayFieldUpdate(field, origin, v);
+  return buildFieldUpdate(field, origin, v);
 }
 
-function buildArrayFieldUpdate(field: Field, origin: any): any {
+function buildArrayFieldUpdate(field: Field, origin: any, v: string): any {
   const last = lodash.last(field.arrays)!;
   const arrayPath = field.path.substring(0, lodash.indexOf(field.path, last) + last.length + 1);
   const valuePath = field.path.substring(arrayPath.length + 1);
@@ -400,7 +481,7 @@ function buildArrayFieldUpdate(field: Field, origin: any): any {
                     `$elemt.${valuePath}`,
                     `$elemt.${valuePath}Info`,
                     origin,
-                    typeof field.onUpdate === 'function'
+                    v
                   ),
                 },
               ],
@@ -413,36 +494,18 @@ function buildArrayFieldUpdate(field: Field, origin: any): any {
   };
 }
 
-function buildFieldUpdate(field: Field, origin: any): any {
+function buildFieldUpdate(field: Field, origin: any, v: string): any {
   return {
-    [field.infoPath]: buildFieldProjection(field.path, field.infoPath, origin, typeof field.onUpdate === 'function'),
+    [field.infoPath]: buildFieldProjection(field.path, field.infoPath, origin, v),
   };
 }
 
-function buildFieldProjection(path: string, infoPath: string, origin: any, triggerOnUpdate = false): any {
-  const projection = {
+function buildFieldProjection(path: string, infoPath: string, origin: any, v: string): any {
+  return {
     $cond: {
       if: { $ne: [`$${infoPath}.value`, `$${path}`] },
-      then: {
-        value: `$${path}`,
-        updatedAt: `$$NOW`,
-        previousValue: `$${infoPath}.value`,
-        previousUpdatedAt: `$${infoPath}.updatedAt`,
-        origin,
-        triggerOnUpdate: true,
-      },
+      then: { value: `$${path}`, updatedAt: `$$NOW`, previousValue: `$${infoPath}.value`, origin, v },
       else: `$${infoPath}`,
     },
   };
-  // const projection: any = {
-  //   value: `$${path}`,
-  //   updatedAt: `$$NOW`,
-  //   previousValue: `$${infoPath}.value`,
-  //   previousUpdatedAt: `$${infoPath}.updatedAt`,
-  //   origin,
-  //   triggerOnUpdate: triggerOnUpdate
-  //     ? { $cond: { if: { $ne: [`$${infoPath}.value`, `$${path}`] }, then: true, else: false } }
-  //     : false,
-  // };
-  return projection;
 }
