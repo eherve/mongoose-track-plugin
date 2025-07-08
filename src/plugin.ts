@@ -31,6 +31,18 @@ declare module 'mongoose' {
     skipTrackPlugin?: boolean;
     origin?: any;
   }
+
+  interface SchemaTypeOptions<T, EnforcedDocType = any> {
+    track?:
+      | boolean
+      | {
+          origin?: any;
+          onUpdate?: (updated: { _id: string; path: string; update: UpdatedData<T> }[]) => void;
+          metadata?: any;
+          historizeCol?: string;
+          historizeField?: string;
+        };
+  }
 }
 
 const asyncStorage = new AsyncLocalStorage<{
@@ -86,10 +98,10 @@ export interface IHistorize<T> {
 }
 
 export type FieldUpdateInfo<T> = {
-  value: T | null;
-  previousValue: T | null;
   updatedAt: Date;
-  origin: any;
+  value?: T;
+  previousValue?: T;
+  origin?: any;
 };
 
 export type TrackPluginOptions = {
@@ -108,6 +120,7 @@ type Field = {
   onUpdate?: <T = any>(updated: { _id: string; path: string; update: UpdatedData<T> }[]) => void;
   metadata?: any;
   historizeCol?: string;
+  historizeField?: string;
 };
 
 export const trackPlugin = function (schema: Schema) {
@@ -119,7 +132,9 @@ export const trackPlugin = function (schema: Schema) {
 
 function registerMiddleWare(schema: Schema, fields: Field[]) {
   schema.pre('save', async function (this: any, options?: any) {
-    lodash.forEach(fields, field => addInitialValue(this, field.path, asyncStorage.getStore()!.v, options?.origin));
+    lodash.forEach(fields, field =>
+      addInitialValue(this, field.path, asyncStorage.getStore()!.v, options?.origin, field.historizeField)
+    );
   });
   schema.post('save', async function (this: any) {
     const store = asyncStorage.getStore();
@@ -133,7 +148,9 @@ function registerMiddleWare(schema: Schema, fields: Field[]) {
       if (options.skipTrackPlugin) return next();
       if (!Array.isArray(docs) || docs.length === 0) return next();
       lodash.forEach(docs, doc =>
-        lodash.forEach(fields, field => addInitialValue(doc, field.path, asyncStorage.getStore()!.v, options?.origin))
+        lodash.forEach(fields, field =>
+          addInitialValue(doc, field.path, asyncStorage.getStore()!.v, options?.origin, field.historizeField)
+        )
       );
       return next();
     }
@@ -254,7 +271,6 @@ async function processHistorized(
     for (let d of data) {
       if (log) console.log(d);
       const update = lodash.get(d, field.path.replace('.', '_'));
-      // if (!update || (Array.isArray(update) && update.length === 0)) continue;
       let bi = lodash.find(bulkInfo, { col: field.historizeCol });
       if (!bi) bulkInfo.push((bi = { col: field.historizeCol, operations: [] }));
       if (Array.isArray(update)) {
@@ -354,16 +370,20 @@ async function getOnUpdateFieldsData(
   return data;
 }
 
-function addInitialValue(doc: any, path: string, v: string, origin: any) {
+function addInitialValue(doc: any, path: string, v: string, origin: any, historizeField?: string) {
   let subDoc = doc;
   const chunks: string[] = lodash.split(path, '.');
   const head = lodash.head(chunks)!;
   if (chunks.length === 1) {
-    subDoc[`${head}Info`] = { value: subDoc[head], updatedAt: new Date(), origin, v };
+    const updatedAt = new Date();
+    subDoc[`${head}Info`] = { value: subDoc[head], updatedAt, origin, v };
+    if (historizeField) subDoc[historizeField] = [[updatedAt.valueOf(), subDoc[head], origin]];
   } else if (Array.isArray(subDoc[head])) {
-    lodash.forEach(subDoc[head], d => addInitialValue(d, lodash.join(lodash.slice(chunks, 1), '.'), v, origin));
+    lodash.forEach(subDoc[head], d =>
+      addInitialValue(d, lodash.join(lodash.slice(chunks, 1), '.'), v, origin, historizeField)
+    );
   } else if (typeof subDoc[head] === 'object') {
-    addInitialValue(subDoc[head], lodash.join(lodash.slice(chunks, 1), '.'), v, origin);
+    addInitialValue(subDoc[head], lodash.join(lodash.slice(chunks, 1), '.'), v, origin, historizeField);
   }
 }
 
@@ -396,15 +416,14 @@ function consolidateUpdate(
 }
 
 function addFieldInfoSchemaPath(schema: Schema, field: Field) {
+  const schemaPath = field.path.substring(0, lodash.lastIndexOf(field.path, '.'));
+  const info = schema.path(schemaPath);
   if (!schema.path(field.infoPath)) {
     const valueType: any = { type: field.typeOptions.type, index: true };
     if (field.typeOptions.enum) {
       valueType.enum = lodash.cloneDeep(field.typeOptions.enum);
       if (!lodash.includes(valueType.enum, null)) valueType.enum.push(null);
     }
-
-    const schemaPath = field.path.substring(0, lodash.lastIndexOf(field.path, '.'));
-    const info = schema.path(schemaPath);
     const type = {
       value: valueType,
       previousValue: valueType,
@@ -414,6 +433,11 @@ function addFieldInfoSchemaPath(schema: Schema, field: Field) {
     };
     if (info?.schema) info.schema.path(field.infoPath.substring(schemaPath.length + 1), { type });
     else schema.path(field.infoPath, { type });
+  }
+  if (field.historizeField && !schema.path(field.historizeField)) {
+    const type = [SchemaTypes.Mixed];
+    if (info?.schema) info.schema.path(field.historizeField, { type });
+    else schema.path(field.historizeField, { type });
   }
 }
 
@@ -452,6 +476,7 @@ function buildField(schemaType: SchemaType, name: string, path: string, arrays: 
     onUpdate: schemaType.options.track.onUpdate,
     metadata: schemaType.options.track.metadata,
     historizeCol: schemaType.options.track.historizeCol,
+    historizeField: schemaType.options.track.historizeField,
   };
   return field;
 }
@@ -465,7 +490,7 @@ function buildArrayFieldUpdate(field: Field, origin: any, v: string): any {
   const last = lodash.last(field.arrays)!;
   const arrayPath = field.path.substring(0, lodash.indexOf(field.path, last) + last.length + 1);
   const valuePath = field.path.substring(arrayPath.length + 1);
-  return {
+  const update: any = {
     [arrayPath]: {
       $map: {
         input: `$${arrayPath}`,
@@ -492,11 +517,29 @@ function buildArrayFieldUpdate(field: Field, origin: any, v: string): any {
       },
     },
   };
+  return update;
 }
 
 function buildFieldUpdate(field: Field, origin: any, v: string): any {
-  return {
+  const update: any = {
     [field.infoPath]: buildFieldProjection(field.path, field.infoPath, origin, v),
+  };
+  if (field.historizeField) {
+    update[field.historizeField] = buildFieldHistorizedProjection(
+      `$${field.historizeField}`,
+      field.path,
+      field.infoPath,
+      origin
+    );
+  }
+  return update;
+}
+
+function buildFieldHistorizedProjection(value: string, path: string, infoPath: string, origin: any) {
+  const data = [{ $toLong: '$$NOW' }, `$${path}`];
+  if (origin) data.push(origin);
+  return {
+    $concatArrays: [value, { $cond: { if: { $ne: [`$${infoPath}.value`, `$${path}`] }, then: [data], else: [] } }],
   };
 }
 

@@ -52,7 +52,7 @@ const schema = new mongoose.Schema({
       onUpdate: data => {
         onUpdateData = data;
       },
-      historizeCol: 'historized',
+      historizeField: 'stageHistory',
     },
   },
   description: String,
@@ -554,7 +554,10 @@ describe('Track Lib', () => {
         expect(data.stageInfo).to.have.property('value', 'schema-origin');
         expect(data.stageInfo).to.have.property('previousValue', previousValue);
         expect(data.stageInfo).to.have.property('origin', 'schema-origin');
-        await checkHistorize(data._id, null, 'stage', data.stageInfo, previous.stageInfo);
+        expect(data.stageHistory).to.have.length(2);
+        expect(data.stageHistory[1]).to.have.length(3);
+        expect(data.stageHistory[1][1]).to.be.equal('schema-origin');
+        expect(data.stageHistory[1][2]).to.be.equal('schema-origin');
       });
     });
 
@@ -571,7 +574,10 @@ describe('Track Lib', () => {
         expect(data.stageInfo).to.have.property('value', 'update-one');
         expect(data.stageInfo).to.have.property('previousValue', previousValue);
         expect(data.stageInfo).to.have.property('origin', origin);
-        await checkHistorize(data._id, null, 'stage', data.stageInfo, previous.stageInfo);
+        expect(data.stageHistory).to.have.length(2);
+        expect(data.stageHistory[1]).to.have.length(3);
+        expect(data.stageHistory[1][1]).to.be.equal('update-one');
+        expect(data.stageHistory[1][2]).to.be.equal(origin);
       });
     });
 
