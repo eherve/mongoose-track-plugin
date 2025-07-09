@@ -36,7 +36,10 @@ declare module 'mongoose' {
       | boolean
       | {
           origin?: any;
-          onUpdate?: (updated: { _id: string; path: string; update: UpdatedData<T> }[]) => void;
+          onUpdate?: (
+            updated: { _id: string; path: string; update: UpdatedData<T> }[],
+            session: ClientSession | null
+          ) => void;
           metadata?: any;
           historizeCol?: string;
           historizeField?: string;
