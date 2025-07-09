@@ -133,10 +133,10 @@ async function processPostUpdate(fields, model, v, session = null) {
     const data = await getOnUpdateFieldsData(toProcessFields, model, v, session);
     if (!data?.length)
         return;
-    processOnUpdate(toProcessFields, data);
+    processOnUpdate(toProcessFields, data, session);
     await processHistorized(toProcessFields, model, data, session);
 }
-function processOnUpdate(fields, data) {
+function processOnUpdate(fields, data, session) {
     lodash.forEach(fields, field => {
         if (typeof field.onUpdate !== 'function')
             return;
@@ -150,7 +150,7 @@ function processOnUpdate(fields, data) {
         if (!updated.length)
             return;
         if (typeof field.onUpdate === 'function')
-            field.onUpdate(updated);
+            field.onUpdate(updated, session);
     });
 }
 async function processHistorized(fields, model, data, session = null) {

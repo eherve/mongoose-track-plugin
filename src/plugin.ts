@@ -117,7 +117,10 @@ type Field = {
   infoPath: string;
   arrays?: string[];
   origin?: () => any;
-  onUpdate?: <T = any>(updated: { _id: string; path: string; update: UpdatedData<T> }[]) => void;
+  onUpdate?: <T = any>(
+    updated: { _id: string; path: string; update: UpdatedData<T> }[],
+    session: ClientSession | null
+  ) => void;
   metadata?: any;
   historizeCol?: string;
   historizeField?: string;
@@ -240,11 +243,11 @@ async function processPostUpdate(fields: Field[], model: Model<any>, v: string, 
   if (!toProcessFields.length) return [];
   const data = await getOnUpdateFieldsData(toProcessFields, model, v, session);
   if (!data?.length) return;
-  processOnUpdate(toProcessFields, data);
+  processOnUpdate(toProcessFields, data, session);
   await processHistorized(toProcessFields, model, data, session);
 }
 
-function processOnUpdate(fields: Field[], data: any[]) {
+function processOnUpdate(fields: Field[], data: any[], session: ClientSession | null) {
   lodash.forEach(fields, field => {
     if (typeof field.onUpdate !== 'function') return;
     const updated: any = [];
@@ -254,7 +257,7 @@ function processOnUpdate(fields: Field[], data: any[]) {
       updated.push({ _id: d._id, path: field.path, update });
     });
     if (!updated.length) return;
-    if (typeof field.onUpdate === 'function') field.onUpdate(updated);
+    if (typeof field.onUpdate === 'function') field.onUpdate(updated, session);
   });
 }
 
