@@ -14,7 +14,7 @@ declare module 'mongoose' {
                 _id: string;
                 path: string;
                 update: UpdatedData<T>;
-            }[]) => void;
+            }[], session: ClientSession | null) => Promise<any>;
             metadata?: any;
             historizeCol?: string;
             historizeField?: string;

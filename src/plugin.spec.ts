@@ -14,7 +14,7 @@ const embeddedSchema = new mongoose.Schema({
   status: {
     type: String,
     track: {
-      onUpdate: data => {
+      onUpdate: async data => {
         onUpdateData = data;
       },
       metadata: {
@@ -35,7 +35,7 @@ const schema = new mongoose.Schema({
   status: {
     type: String,
     track: {
-      onUpdate: data => {
+      onUpdate: async data => {
         onUpdateData = data;
       },
       metadata: {
@@ -49,7 +49,7 @@ const schema = new mongoose.Schema({
     type: String,
     track: {
       origin: () => `schema-origin`,
-      onUpdate: data => {
+      onUpdate: async data => {
         onUpdateData = data;
       },
       historizeField: 'stageHistory',
@@ -63,7 +63,7 @@ const schema = new mongoose.Schema({
         status: {
           type: String,
           track: {
-            onUpdate: data => {
+            onUpdate: async data => {
               onUpdateData = data;
             },
             metadata: {

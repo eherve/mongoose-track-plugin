@@ -39,7 +39,7 @@ declare module 'mongoose' {
           onUpdate?: (
             updated: { _id: string; path: string; update: UpdatedData<T> }[],
             session: ClientSession | null
-          ) => void;
+          ) => Promise<any>;
           metadata?: any;
           historizeCol?: string;
           historizeField?: string;
@@ -123,7 +123,7 @@ type Field = {
   onUpdate?: <T = any>(
     updated: { _id: string; path: string; update: UpdatedData<T> }[],
     session: ClientSession | null
-  ) => void;
+  ) => Promise<any>;
   metadata?: any;
   historizeCol?: string;
   historizeField?: string;
@@ -246,22 +246,22 @@ async function processPostUpdate(fields: Field[], model: Model<any>, v: string, 
   if (!toProcessFields.length) return [];
   const data = await getOnUpdateFieldsData(toProcessFields, model, v, session);
   if (!data?.length) return;
-  processOnUpdate(toProcessFields, data, session);
+  await processOnUpdate(toProcessFields, data, session);
   await processHistorized(toProcessFields, model, data, session);
 }
 
-function processOnUpdate(fields: Field[], data: any[], session: ClientSession | null) {
-  lodash.forEach(fields, field => {
-    if (typeof field.onUpdate !== 'function') return;
+async function processOnUpdate(fields: Field[], data: any[], session: ClientSession | null) {
+  for (let field of fields) {
+    if (typeof field.onUpdate !== 'function') continue;
     const updated: any = [];
     lodash.each(data, d => {
       const update = lodash.get(d, field.path.replace('.', '_'));
       if (!update || (Array.isArray(update) && update.length === 0)) return;
       updated.push({ _id: d._id, path: field.path, update });
     });
-    if (!updated.length) return;
-    if (typeof field.onUpdate === 'function') field.onUpdate(updated, session);
-  });
+    if (!updated.length) continue;
+    if (typeof field.onUpdate === 'function') await field.onUpdate(updated, session);
+  }
 }
 
 async function processHistorized(

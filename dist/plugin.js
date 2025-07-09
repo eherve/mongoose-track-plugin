@@ -133,13 +133,13 @@ async function processPostUpdate(fields, model, v, session = null) {
     const data = await getOnUpdateFieldsData(toProcessFields, model, v, session);
     if (!data?.length)
         return;
-    processOnUpdate(toProcessFields, data, session);
+    await processOnUpdate(toProcessFields, data, session);
     await processHistorized(toProcessFields, model, data, session);
 }
-function processOnUpdate(fields, data, session) {
-    lodash.forEach(fields, field => {
+async function processOnUpdate(fields, data, session) {
+    for (let field of fields) {
         if (typeof field.onUpdate !== 'function')
-            return;
+            continue;
         const updated = [];
         lodash.each(data, d => {
             const update = lodash.get(d, field.path.replace('.', '_'));
@@ -148,10 +148,10 @@ function processOnUpdate(fields, data, session) {
             updated.push({ _id: d._id, path: field.path, update });
         });
         if (!updated.length)
-            return;
+            continue;
         if (typeof field.onUpdate === 'function')
-            field.onUpdate(updated, session);
-    });
+            await field.onUpdate(updated, session);
+    }
 }
 async function processHistorized(fields, model, data, session = null) {
     const bulkInfo = [];
