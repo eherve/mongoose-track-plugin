@@ -26,9 +26,10 @@ export interface IHistorize<T> {
     itemId?: Types.ObjectId;
     path: string;
     start: Date;
-    end: Date | null;
     value?: T;
+    end: Date | null;
     previousValue?: T;
+    nextValue?: T;
     origin?: any;
     metadata?: any;
 }
@@ -39,13 +40,11 @@ export type FieldUpdateInfo<T> = {
     origin?: any;
 };
 export type TrackPluginOptions = {
-    logger?: {
-        debug: (...args: any) => void;
-    };
+    origin?: () => any;
 };
 type UpdatedData<T> = FieldUpdateInfo<T> & {
     itemId: Types.ObjectId;
     metadata?: any;
 };
-export declare const trackPlugin: (schema: Schema) => void;
+export declare const trackPlugin: (schema: Schema, options?: TrackPluginOptions) => void;
 export {};

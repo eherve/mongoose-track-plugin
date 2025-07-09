@@ -5,7 +5,6 @@ const mongoose_update_to_pipeline_1 = require("@eherve/mongoose-update-to-pipeli
 const async_hooks_1 = require("async_hooks");
 const lodash = require("lodash");
 const mongoose_1 = require("mongoose");
-const util_1 = require("util");
 const uuid_1 = require("uuid");
 const update_tools_1 = require("./update-tools");
 const asyncStorage = new async_hooks_1.AsyncLocalStorage();
@@ -28,8 +27,8 @@ mongoose_1.default.model = function (name, schema, collection, options) {
     }
     return model;
 };
-const trackPlugin = function (schema) {
-    const fields = getSchemaFields(schema);
+const trackPlugin = function (schema, options) {
+    const fields = getSchemaFields(schema, undefined, undefined, options);
     if (!fields.length)
         return;
     lodash.each(fields, field => addFieldInfoSchemaPath(schema, field));
@@ -154,14 +153,12 @@ function processOnUpdate(fields, data) {
             field.onUpdate(updated);
     });
 }
-async function processHistorized(fields, model, data, session = null, log = false) {
+async function processHistorized(fields, model, data, session = null) {
     const bulkInfo = [];
     for (let field of fields) {
         if (!field.historizeCol)
             continue;
         for (let d of data) {
-            if (log)
-                console.log(d);
             const update = lodash.get(d, field.path.replace('.', '_'));
             let bi = lodash.find(bulkInfo, { col: field.historizeCol });
             if (!bi)
@@ -175,8 +172,6 @@ async function processHistorized(fields, model, data, session = null, log = fals
     }
     if (bulkInfo.length) {
         for (let i of bulkInfo) {
-            if (log)
-                console.log((0, util_1.inspect)(i.operations, false, null, true));
             await model.db.collection(i.col).bulkWrite(i.operations, { ordered: true, session: session ?? undefined });
         }
     }
@@ -203,6 +198,7 @@ function buildHistorizeOperation(field, entityId, update) {
                     {
                         $set: {
                             end: start,
+                            nextValue: document.value,
                             duration: { $dateDiff: { startDate: '$start', endDate: start, unit: 'millisecond' } },
                         },
                     },
@@ -327,7 +323,7 @@ function addFieldInfoSchemaPath(schema, field) {
             schema.path(field.historizeField, { type });
     }
 }
-function getSchemaFields(schema, parentPath, arrays) {
+function getSchemaFields(schema, parentPath, arrays, options) {
     const fields = [];
     lodash.each(lodash.keys(schema.paths), key => {
         const schemaType = schema.path(key);
@@ -335,32 +331,32 @@ function getSchemaFields(schema, parentPath, arrays) {
         switch (schemaType.instance) {
             case 'Embedded':
                 if (schemaType.options?.track)
-                    fields.push(buildField(schemaType, key, path, arrays));
+                    fields.push(buildField(schemaType, key, path, arrays, options));
                 else
-                    fields.push(...getSchemaFields(schemaType.schema, path, arrays));
+                    fields.push(...getSchemaFields(schemaType.schema, path, arrays, options));
                 break;
             case 'Array':
                 if (schemaType.options?.track)
-                    fields.push(buildField(schemaType, key, path, arrays));
+                    fields.push(buildField(schemaType, key, path, arrays, options));
                 else if (schemaType.schema) {
-                    fields.push(...getSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key])));
+                    fields.push(...getSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key]), options));
                 }
                 break;
             default:
                 if (schemaType.options?.track)
-                    fields.push(buildField(schemaType, key, path, arrays));
+                    fields.push(buildField(schemaType, key, path, arrays, options));
         }
     });
     return fields;
 }
-function buildField(schemaType, name, path, arrays) {
+function buildField(schemaType, name, path, arrays, options) {
     const field = {
         path,
         name,
         typeOptions: lodash.pick(schemaType.options, 'type', 'enum'),
         infoPath: `${path}Info`,
         arrays,
-        origin: schemaType.options.track.origin,
+        origin: schemaType.options.track.origin ?? options?.origin,
         onUpdate: schemaType.options.track.onUpdate,
         metadata: schemaType.options.track.metadata,
         historizeCol: schemaType.options.track.historizeCol,

@@ -19,7 +19,6 @@ import mongoose, {
   Types,
   UpdateQuery,
 } from 'mongoose';
-import { inspect } from 'util';
 import { v4 } from 'uuid';
 import { addMergeUpdateStage, getAggregateTargetModel, hasQueryFieldUpdate } from './update-tools';
 
@@ -90,9 +89,10 @@ export interface IHistorize<T> {
   itemId?: Types.ObjectId;
   path: string;
   start: Date;
-  end: Date | null;
   value?: T;
+  end: Date | null;
   previousValue?: T;
+  nextValue?: T;
   origin?: any;
   metadata?: any;
 }
@@ -105,7 +105,7 @@ export type FieldUpdateInfo<T> = {
 };
 
 export type TrackPluginOptions = {
-  logger?: { debug: (...args: any) => void };
+  origin?: () => any;
 };
 
 type UpdatedData<T> = FieldUpdateInfo<T> & { itemId: Types.ObjectId; metadata?: any };
@@ -123,8 +123,8 @@ type Field = {
   historizeField?: string;
 };
 
-export const trackPlugin = function (schema: Schema) {
-  const fields = getSchemaFields(schema);
+export const trackPlugin = function (schema: Schema, options?: TrackPluginOptions) {
+  const fields = getSchemaFields(schema, undefined, undefined, options);
   if (!fields.length) return;
   lodash.each(fields, field => addFieldInfoSchemaPath(schema, field));
   registerMiddleWare(schema, fields);
@@ -262,14 +262,12 @@ async function processHistorized(
   fields: Field[],
   model: Model<any>,
   data: any[],
-  session: ClientSession | null = null,
-  log: boolean = false
+  session: ClientSession | null = null
 ) {
   const bulkInfo: { col: string; operations: AnyBulkWriteOperation<any>[] }[] = [];
   for (let field of fields) {
     if (!field.historizeCol) continue;
     for (let d of data) {
-      if (log) console.log(d);
       const update = lodash.get(d, field.path.replace('.', '_'));
       let bi = lodash.find(bulkInfo, { col: field.historizeCol });
       if (!bi) bulkInfo.push((bi = { col: field.historizeCol, operations: [] }));
@@ -280,7 +278,6 @@ async function processHistorized(
   }
   if (bulkInfo.length) {
     for (let i of bulkInfo) {
-      if (log) console.log(inspect(i.operations, false, null, true));
       await model.db.collection(i.col).bulkWrite(i.operations as any, { ordered: true, session: session ?? undefined });
     }
   }
@@ -303,6 +300,7 @@ function buildHistorizeOperation(field: Field, entityId: any, update: UpdatedDat
           {
             $set: {
               end: start,
+              nextValue: document.value,
               duration: { $dateDiff: { startDate: '$start', endDate: start, unit: 'millisecond' } },
             },
           },
@@ -441,38 +439,49 @@ function addFieldInfoSchemaPath(schema: Schema, field: Field) {
   }
 }
 
-function getSchemaFields(schema: Schema, parentPath?: string, arrays?: string[]): Field[] {
+function getSchemaFields(
+  schema: Schema,
+  parentPath?: string,
+  arrays?: string[],
+  options?: TrackPluginOptions
+): Field[] {
   const fields: Field[] = [];
   lodash.each(lodash.keys(schema.paths), key => {
     const schemaType = schema.path(key);
     const path = parentPath ? `${parentPath}.${schemaType.path}` : schemaType.path;
     switch (schemaType.instance) {
       case 'Embedded':
-        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays));
-        else fields.push(...getSchemaFields(schemaType.schema, path, arrays));
+        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays, options));
+        else fields.push(...getSchemaFields(schemaType.schema, path, arrays, options));
         break;
       case 'Array':
-        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays));
+        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays, options));
         else if (schemaType.schema) {
-          fields.push(...getSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key])));
+          fields.push(...getSchemaFields(schemaType.schema, path, lodash.concat(arrays || [], [key]), options));
         }
         break;
       default:
-        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays));
+        if (schemaType.options?.track) fields.push(buildField(schemaType, key, path, arrays, options));
     }
   });
 
   return fields;
 }
 
-function buildField(schemaType: SchemaType, name: string, path: string, arrays: string[] | undefined): Field {
+function buildField(
+  schemaType: SchemaType,
+  name: string,
+  path: string,
+  arrays: string[] | undefined,
+  options?: TrackPluginOptions
+): Field {
   const field: Field = {
     path,
     name,
     typeOptions: lodash.pick(schemaType.options, 'type', 'enum'),
     infoPath: `${path}Info`,
     arrays,
-    origin: schemaType.options.track.origin,
+    origin: schemaType.options.track.origin ?? options?.origin,
     onUpdate: schemaType.options.track.onUpdate,
     metadata: schemaType.options.track.metadata,
     historizeCol: schemaType.options.track.historizeCol,
