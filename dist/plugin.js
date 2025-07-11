@@ -37,7 +37,10 @@ const trackPlugin = function (schema, options) {
 exports.trackPlugin = trackPlugin;
 function registerMiddleWare(schema, fields) {
     schema.pre('save', async function (options) {
-        lodash.forEach(fields, field => addInitialValue(this, field.path, asyncStorage.getStore().v, options?.origin, field.historizeField));
+        lodash.forEach(fields, field => {
+            const origin = options?.origin ?? (field.origin ? field.origin() : undefined);
+            addInitialValue(this, field.path, asyncStorage.getStore().v, origin, field.historizeField);
+        });
     });
     schema.post('save', async function () {
         const store = asyncStorage.getStore();
@@ -46,11 +49,14 @@ function registerMiddleWare(schema, fields) {
         await processPostUpdate(fields, store.model, store.v, store.session);
     });
     schema.pre('insertMany', async function (next, docs, options) {
-        if (options.skipTrackPlugin)
+        if (options?.skipTrackPlugin)
             return next();
         if (!Array.isArray(docs) || docs.length === 0)
             return next();
-        lodash.forEach(docs, doc => lodash.forEach(fields, field => addInitialValue(doc, field.path, asyncStorage.getStore().v, options?.origin, field.historizeField)));
+        lodash.forEach(docs, doc => lodash.forEach(fields, field => {
+            const origin = options?.origin ?? (field.origin ? field.origin() : undefined);
+            addInitialValue(doc, field.path, asyncStorage.getStore().v, origin, field.historizeField);
+        }));
         return next();
     });
     schema.post('insertMany', async function () {
@@ -89,8 +95,8 @@ function registerMiddleWare(schema, fields) {
         const queryUpdate = this.getUpdate();
         if (!queryUpdate)
             return;
-        this['trachPluginV'] = (0, uuid_1.v4)();
-        const update = consolidateUpdate(fields, this['trachPluginV'], options, this.getFilter(), this.getUpdate(), options.arrayFilters);
+        this['trackPluginV'] = this['trackPluginV'] ?? (0, uuid_1.v4)();
+        const update = consolidateUpdate(fields, this['trackPluginV'], options, this.getFilter(), this.getUpdate(), options.arrayFilters);
         if (update)
             this.setUpdate(update);
     });
@@ -100,7 +106,7 @@ function registerMiddleWare(schema, fields) {
             return;
         if (!res.modifiedCount && !res.upsertedCount)
             return;
-        await processPostUpdate(fields, this.model, this['trachPluginV'], options.session);
+        await processPostUpdate(fields, this.model, this['trackPluginV'], options.session);
     });
     schema.pre('aggregate', async function () {
         if (this.options.skipTrackPlugin)
@@ -111,8 +117,8 @@ function registerMiddleWare(schema, fields) {
         const fields = getSchemaFields(targetModel?.schema);
         if (!fields.length)
             return;
-        this['trachPluginV'] = (0, uuid_1.v4)();
-        (0, update_tools_1.addMergeUpdateStage)(this, buildSetUpdate(fields, this['trachPluginV'], this.options));
+        this['trackPluginV'] = this['trackPluginV'] ?? (0, uuid_1.v4)();
+        (0, update_tools_1.addMergeUpdateStage)(this, buildSetUpdate(fields, this['trackPluginV'], this.options));
     });
     schema.post('aggregate', async function () {
         if (this.options?.skipTrackPlugin)
@@ -123,7 +129,7 @@ function registerMiddleWare(schema, fields) {
         const fields = getSchemaFields(targetModel?.schema);
         if (!fields.length)
             return;
-        await processPostUpdate(fields, targetModel, this['trachPluginV'], this.options.session);
+        await processPostUpdate(fields, targetModel, this['trackPluginV'], this.options.session);
     });
 }
 async function processPostUpdate(fields, model, v, session = null) {
@@ -172,23 +178,27 @@ async function processHistorized(fields, model, data, session = null) {
     }
     if (bulkInfo.length) {
         for (let i of bulkInfo) {
+            if (!i.operations.length)
+                continue;
             await model.db.collection(i.col).bulkWrite(i.operations, { ordered: true, session: session ?? undefined });
         }
     }
 }
 function buildHistorizeOperation(field, entityId, update) {
+    if (!update || !lodash.has(update, 'value'))
+        return [];
     const start = update?.updatedAt ?? new Date();
     const document = { entityId: entityId, path: field.path, start, end: null };
     const filter = { entityId: entityId, path: field.path, end: null };
-    if (update?.itemId !== undefined)
+    if (update.itemId !== undefined)
         document.itemId = filter.itemId = update.itemId;
-    if (update?.value !== undefined)
+    if (update.value !== undefined)
         document.value = update.value;
-    if (update?.previousValue !== undefined)
+    if (update.previousValue !== undefined)
         document.previousValue = update.previousValue;
-    if (update?.origin !== undefined)
+    if (update.origin !== undefined)
         document.origin = update.origin;
-    if (update?.metadata !== undefined)
+    if (update.metadata !== undefined)
         document.metadata = update.metadata;
     return [
         {
@@ -208,10 +218,10 @@ function buildHistorizeOperation(field, entityId, update) {
         { insertOne: { document } },
     ];
 }
-async function getOnUpdateFieldsData(fieldsWithOnUpdate, model, v, session = null) {
+async function getOnUpdateFieldsData(fields, model, v, session = null) {
     const filter = { $or: [] };
     const projection = {};
-    lodash.each(fieldsWithOnUpdate, field => {
+    lodash.each(fields, field => {
         filter.$or.push({ [`${field.infoPath}.v`]: v });
         const chunks = lodash.split(field.infoPath, '.');
         const infoField = lodash.last(chunks);
@@ -277,7 +287,10 @@ function addInitialValue(doc, path, v, origin, historizeField) {
 }
 function buildSetUpdate(fields, v, options) {
     const $set = {};
-    lodash.each(fields, field => lodash.merge($set, buildUpdate(field, v, options?.origin ?? (field.origin ? field.origin() : undefined))));
+    lodash.each(fields, field => {
+        const origin = options?.origin ?? (field.origin ? field.origin() : undefined);
+        lodash.merge($set, buildUpdate(field, v, origin));
+    });
     return $set;
 }
 function consolidateUpdate(fields, v, options, filter, update, arrayFilters) {

@@ -85,7 +85,8 @@ const schema = new mongoose.Schema({
   embeddedSchemaArray: { type: [embeddedSchema] },
 });
 
-schema.plugin(trackPlugin);
+let origin = v4();
+schema.plugin(trackPlugin, { origin: () => origin });
 
 const model: mongoose.Model<any> = mongoose.model('Test', schema) as any;
 const otherModel: mongoose.Model<any> = mongoose.model('Embedded', embeddedSchema) as any;
@@ -110,6 +111,7 @@ describe('Track Lib', () => {
         expect(d).to.have.property('status');
         expect(d.statusInfo).to.not.be.null;
         expect(d.statusInfo).to.have.property('value', d.status);
+        expect(d.statusInfo).to.have.property('origin', origin);
         await checkHistorize(d._id, null, 'status', d.statusInfo);
       }
     });
@@ -561,6 +563,23 @@ describe('Track Lib', () => {
       });
     });
 
+    it('update one on property with lib options origin', async () => {
+      origin = v4();
+      const match = { code: 'A001' };
+      const previous = await model.findOne(match);
+      const previousValue = previous.status;
+      await model.updateOne(match, { $set: { status: 'schema-origin' } }).then(async () => {
+        const data = await model.findOne(match);
+        expect(data).to.not.be.null;
+        expect(data).to.have.property('status', 'schema-origin');
+        expect(data.statusInfo).to.not.be.null;
+        expect(data.statusInfo).to.have.property('value', 'schema-origin');
+        expect(data.statusInfo).to.have.property('previousValue', previousValue);
+        expect(data.statusInfo).to.have.property('origin', origin);
+        await checkHistorize(data._id, null, 'status', data.statusInfo, previous.statusInfo);
+      });
+    });
+
     it('update one on property', async () => {
       const match = { code: 'A001' };
       const previous = await model.findOne(match);
@@ -818,108 +837,105 @@ async function reset(): Promise<void> {
 }
 
 async function seed(): Promise<void> {
-  await model.insertMany(
-    [
-      {
-        code: 'A001',
-        description: 'Produit en stock',
-        status: 'disponible',
+  await model.insertMany([
+    {
+      code: 'A001',
+      description: 'Produit en stock',
+      status: 'disponible',
+      stage: 'init',
+      embeddedSchema: {
+        code: 'P001',
+        status: 'actif',
         stage: 'init',
-        embeddedSchema: {
-          code: 'P001',
-          status: 'actif',
+      },
+      embeddedSchemaArray: [
+        {
+          code: 'X100',
+          status: 'en attente',
           stage: 'init',
         },
-        embeddedSchemaArray: [
-          {
-            code: 'X100',
-            status: 'en attente',
-            stage: 'init',
-          },
-          {
-            code: 'X101',
-            status: 'validé',
-            stage: 'init',
-          },
-        ],
-      },
-      {
-        code: 'A002',
-        description: 'Produit en rupture de stock',
-        status: 'indisponible',
-        stage: 'init',
-        embeddedSchemaArray: [
-          {
-            code: 'X100',
-            status: 'en attente',
-            stage: 'init',
-          },
-          {
-            code: 'X101',
-            status: 'validé',
-            stage: 'init',
-          },
-          {
-            code: 'X102',
-            status: 'rejeté',
-            stage: 'init',
-          },
-          {
-            code: 'X103',
-            status: 'en cours',
-            stage: 'init',
-          },
-          {
-            code: 'X104',
-            status: 'terminé',
-            stage: 'init',
-          },
-          {
-            code: 'X105',
-            status: 'annulé',
-            stage: 'init',
-          },
-        ],
-      },
-      {
-        code: 'A004',
-        description: 'Produit en précommande',
-        status: 'précommande',
-        stage: 'init',
-        array: [
-          {
-            code: 'X100',
-            status: 'en attente',
-            stage: 'init',
-          },
-          {
-            code: 'X101',
-            status: 'validé',
-            stage: 'init',
-          },
-        ],
-      },
-      {
-        code: 'B001',
-        description: 'Produit avec défaut mineur',
-        status: 'disponible',
-        stage: 'init',
-      },
-      {
-        code: 'B002',
-        description: 'Produit retiré de la vente',
-        status: 'indisponible',
-        stage: 'init',
-      },
-      {
-        code: 'C001',
-        description: 'Produit en promotion',
-        status: 'disponible',
-        stage: 'init',
-      },
-    ],
-    { origin: 'seeder' } as any
-  );
+        {
+          code: 'X101',
+          status: 'validé',
+          stage: 'init',
+        },
+      ],
+    },
+    {
+      code: 'A002',
+      description: 'Produit en rupture de stock',
+      status: 'indisponible',
+      stage: 'init',
+      embeddedSchemaArray: [
+        {
+          code: 'X100',
+          status: 'en attente',
+          stage: 'init',
+        },
+        {
+          code: 'X101',
+          status: 'validé',
+          stage: 'init',
+        },
+        {
+          code: 'X102',
+          status: 'rejeté',
+          stage: 'init',
+        },
+        {
+          code: 'X103',
+          status: 'en cours',
+          stage: 'init',
+        },
+        {
+          code: 'X104',
+          status: 'terminé',
+          stage: 'init',
+        },
+        {
+          code: 'X105',
+          status: 'annulé',
+          stage: 'init',
+        },
+      ],
+    },
+    {
+      code: 'A004',
+      description: 'Produit en précommande',
+      status: 'précommande',
+      stage: 'init',
+      array: [
+        {
+          code: 'X100',
+          status: 'en attente',
+          stage: 'init',
+        },
+        {
+          code: 'X101',
+          status: 'validé',
+          stage: 'init',
+        },
+      ],
+    },
+    {
+      code: 'B001',
+      description: 'Produit avec défaut mineur',
+      status: 'disponible',
+      stage: 'init',
+    },
+    {
+      code: 'B002',
+      description: 'Produit retiré de la vente',
+      status: 'indisponible',
+      stage: 'init',
+    },
+    {
+      code: 'C001',
+      description: 'Produit en promotion',
+      status: 'disponible',
+      stage: 'init',
+    },
+  ]);
 
   await model.create(
     [

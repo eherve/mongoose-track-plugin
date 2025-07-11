@@ -1,4 +1,13 @@
-import { Schema, Types } from 'mongoose';
+import { ClientSession, Schema, Types } from 'mongoose';
+export type UpdatedData<T> = FieldUpdateInfo<T> & {
+    itemId: Types.ObjectId;
+    metadata?: any;
+};
+export type OnUpdate<T = any> = (updated: {
+    _id: Types.ObjectId;
+    path: string;
+    update: UpdatedData<T>;
+}[], session: ClientSession | null) => Promise<any>;
 declare module 'mongoose' {
     interface Schema {
         options?: SchemaOptions;
@@ -10,11 +19,7 @@ declare module 'mongoose' {
     interface SchemaTypeOptions<T, EnforcedDocType = any> {
         track?: boolean | {
             origin?: any;
-            onUpdate?: (updated: {
-                _id: string;
-                path: string;
-                update: UpdatedData<T>;
-            }[], session: ClientSession | null) => Promise<any>;
+            onUpdate?: OnUpdate<T>;
             metadata?: any;
             historizeCol?: string;
             historizeField?: string;
@@ -42,9 +47,4 @@ export type FieldUpdateInfo<T> = {
 export type TrackPluginOptions = {
     origin?: () => any;
 };
-type UpdatedData<T> = FieldUpdateInfo<T> & {
-    itemId: Types.ObjectId;
-    metadata?: any;
-};
 export declare const trackPlugin: (schema: Schema, options?: TrackPluginOptions) => void;
-export {};
