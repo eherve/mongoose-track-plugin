@@ -40,7 +40,7 @@ declare module 'mongoose' {
     track?:
       | boolean
       | {
-          origin?: any;
+          origin?: () => any;
           onUpdate?: OnUpdate<T>;
           metadata?: any;
           historizeCol?: string;
