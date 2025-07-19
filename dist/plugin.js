@@ -37,9 +37,12 @@ const trackPlugin = function (schema, options) {
 exports.trackPlugin = trackPlugin;
 function registerMiddleWare(schema, fields) {
     schema.pre('save', async function (options) {
+        const store = asyncStorage.getStore();
+        if (!store)
+            return;
         lodash.forEach(fields, field => {
             const origin = options?.origin ?? (field.origin ? field.origin() : undefined);
-            addInitialValue(this, field.path, asyncStorage.getStore().v, origin, field.historizeField);
+            addInitialValue(this, field.path, store.v, origin, field.historizeField);
         });
     });
     schema.post('save', async function () {
@@ -53,9 +56,12 @@ function registerMiddleWare(schema, fields) {
             return next();
         if (!Array.isArray(docs) || docs.length === 0)
             return next();
+        const store = asyncStorage.getStore();
+        if (!store)
+            return;
         lodash.forEach(docs, doc => lodash.forEach(fields, field => {
             const origin = options?.origin ?? (field.origin ? field.origin() : undefined);
-            addInitialValue(doc, field.path, asyncStorage.getStore().v, origin, field.historizeField);
+            addInitialValue(doc, field.path, store.v, origin, field.historizeField);
         }));
         return next();
     });
@@ -68,6 +74,9 @@ function registerMiddleWare(schema, fields) {
     schema.pre('bulkWrite', async function (next, operations, options) {
         if (options.skipTrackPlugin)
             return next();
+        const store = asyncStorage.getStore();
+        if (!store)
+            return;
         lodash.each(operations, operation => {
             let block;
             if (operation.updateOne)
@@ -76,7 +85,7 @@ function registerMiddleWare(schema, fields) {
                 block = operation.updateMany;
             else
                 return;
-            const update = consolidateUpdate(fields, asyncStorage.getStore().v, options, block.filter, block.update, block.arrayFilters);
+            const update = consolidateUpdate(fields, store.v, options, block.filter, block.update, block.arrayFilters);
             if (!update)
                 return;
             block.update = update;
@@ -86,7 +95,10 @@ function registerMiddleWare(schema, fields) {
     schema.post('bulkWrite', async function (res) {
         if (!res.modifiedCount && !res.upsertedCount)
             return;
-        await processPostUpdate(fields, this, asyncStorage.getStore().v, asyncStorage.getStore()?.session);
+        const store = asyncStorage.getStore();
+        if (!store)
+            return;
+        await processPostUpdate(fields, this, store.v, asyncStorage.getStore()?.session);
     });
     schema.pre(['updateOne', 'updateMany', 'findOneAndUpdate', 'findOneAndReplace'], async function () {
         const options = this.getOptions();

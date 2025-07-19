@@ -18,7 +18,7 @@ declare module 'mongoose' {
     }
     interface SchemaTypeOptions<T, EnforcedDocType = any> {
         track?: boolean | {
-            origin?: any;
+            origin?: () => any;
             onUpdate?: OnUpdate<T>;
             metadata?: any;
             historizeCol?: string;
