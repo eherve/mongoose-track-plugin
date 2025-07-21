@@ -55,39 +55,49 @@ const asyncStorage = new AsyncLocalStorage<{
   session?: ClientSession | null;
 }>();
 
-const _model = mongoose.model;
-mongoose.model = function <TSchema extends Schema = any>(
-  name: string,
-  schema?: TSchema,
-  collection?: string,
-  options?: CompileModelOptions
-): any {
-  const model: Model<any> = _model.call(this, name, schema, collection, options) as any;
-  if (schema) {
-    const create: any = model.create;
-    model.create = function (this: Model<any>, doc: any, options?: any) {
-      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
-        create.call(this, doc, options)
-      );
-    } as any;
-    const insertMany: any = model.insertMany;
-    model.insertMany = function (this: Model<any>, doc: any, options?: any) {
-      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
-        insertMany.call(this, doc, options)
-      );
-    } as any;
-    const bulkWrite = model.bulkWrite;
-    model.bulkWrite = function (
-      writes: Array<AnyBulkWriteOperation<any>>,
-      options?: MongooseBulkWriteOptions & { ordered: false }
-    ) {
-      return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
-        bulkWrite.call(this, writes, options)
-      );
-    };
-  }
+function wrapModel(model: Model<any>) {
+  const create = model.create;
+  model.create = function (this: Model<any>, doc: any, options?: any) {
+    return asyncStorage.run({ model, session: options?.session, v: v4() }, async () => create.call(this, doc, options));
+  };
+
+  const insertMany: any = model.insertMany;
+  model.insertMany = function (this: Model<any>, doc: any, options?: any) {
+    return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
+      insertMany.call(this, doc, options)
+    );
+  };
+
+  const bulkWrite = model.bulkWrite;
+  model.bulkWrite = function (
+    writes: Array<AnyBulkWriteOperation<any>>,
+    options?: MongooseBulkWriteOptions & { ordered?: boolean }
+  ) {
+    return asyncStorage.run({ model, session: options?.session, v: v4() }, async () =>
+      bulkWrite.call(this, writes, options)
+    );
+  };
+
   return model;
-};
+}
+
+function patchModelMethod(prototype: any, flag: string) {
+  if (prototype[flag]) return;
+  const original = prototype.model;
+  prototype.model = function (name: string, schema?: Schema, collection?: string, options?: any) {
+    console.log('here', flag, name);
+    const model = original.call(this, name, schema, collection, options);
+    if (schema) {
+      wrapModel(model);
+    }
+    return model;
+  };
+  prototype[flag] = true;
+}
+
+patchModelMethod(mongoose, '_modelPatched_mongoose');
+patchModelMethod((mongoose as any).Mongoose.prototype, '_modelPatched_global');
+patchModelMethod(mongoose.Connection.prototype, '_modelPatched_conn');
 
 export interface IHistorize<T> {
   entityId: Types.ObjectId;

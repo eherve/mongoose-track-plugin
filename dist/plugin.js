@@ -8,25 +8,38 @@ const mongoose_1 = require("mongoose");
 const uuid_1 = require("uuid");
 const update_tools_1 = require("./update-tools");
 const asyncStorage = new async_hooks_1.AsyncLocalStorage();
-const _model = mongoose_1.default.model;
-mongoose_1.default.model = function (name, schema, collection, options) {
-    const model = _model.call(this, name, schema, collection, options);
-    if (schema) {
-        const create = model.create;
-        model.create = function (doc, options) {
-            return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => create.call(this, doc, options));
-        };
-        const insertMany = model.insertMany;
-        model.insertMany = function (doc, options) {
-            return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => insertMany.call(this, doc, options));
-        };
-        const bulkWrite = model.bulkWrite;
-        model.bulkWrite = function (writes, options) {
-            return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => bulkWrite.call(this, writes, options));
-        };
-    }
+function wrapModel(model) {
+    const create = model.create;
+    model.create = function (doc, options) {
+        return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => create.call(this, doc, options));
+    };
+    const insertMany = model.insertMany;
+    model.insertMany = function (doc, options) {
+        return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => insertMany.call(this, doc, options));
+    };
+    const bulkWrite = model.bulkWrite;
+    model.bulkWrite = function (writes, options) {
+        return asyncStorage.run({ model, session: options?.session, v: (0, uuid_1.v4)() }, async () => bulkWrite.call(this, writes, options));
+    };
     return model;
-};
+}
+function patchModelMethod(prototype, flag) {
+    if (prototype[flag])
+        return;
+    const original = prototype.model;
+    prototype.model = function (name, schema, collection, options) {
+        console.log('here', flag, name);
+        const model = original.call(this, name, schema, collection, options);
+        if (schema) {
+            wrapModel(model);
+        }
+        return model;
+    };
+    prototype[flag] = true;
+}
+patchModelMethod(mongoose_1.default, '_modelPatched_mongoose');
+patchModelMethod(mongoose_1.default.Mongoose.prototype, '_modelPatched_global');
+patchModelMethod(mongoose_1.default.Connection.prototype, '_modelPatched_conn');
 const trackPlugin = function (schema, options) {
     const fields = getSchemaFields(schema, undefined, undefined, options);
     if (!fields.length)
