@@ -85,7 +85,6 @@ function patchModelMethod(prototype: any, flag: string) {
   if (prototype[flag]) return;
   const original = prototype.model;
   prototype.model = function (name: string, schema?: Schema, collection?: string, options?: any) {
-    console.log('here', flag, name);
     const model = original.call(this, name, schema, collection, options);
     if (schema) {
       wrapModel(model);
