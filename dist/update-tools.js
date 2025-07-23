@@ -4,7 +4,9 @@ exports.hasQueryFieldUpdate = hasQueryFieldUpdate;
 exports.getAggregateTargetModel = getAggregateTargetModel;
 exports.getMergePipelineStage = getMergePipelineStage;
 exports.addMergeUpdateStage = addMergeUpdateStage;
+exports.patchModel = patchModel;
 const lodash = require("lodash");
+const mongoose_1 = require("mongoose");
 function hasQueryFieldUpdate(updates, path) {
     for (let update of (Array.isArray(updates) ? updates : [updates])) {
         if (hasUpdateValue(update, path))
@@ -81,4 +83,21 @@ function addMergeUpdateStage(aggregate, $set) {
     }
     else
         $merge.whenMatched?.push({ $set });
+}
+function patchModelMethod(prototype, flag, wrapper) {
+    if (prototype[flag])
+        return;
+    const original = prototype.model;
+    prototype.model = function (name, schema, collection, options) {
+        const model = original.call(this, name, schema, collection, options);
+        if (schema)
+            wrapper(schema, model);
+        return model;
+    };
+    prototype[flag] = true;
+}
+function patchModel(id, wrapper) {
+    patchModelMethod(mongoose_1.default, `${id}_modelPatched_mongoose`, wrapper);
+    patchModelMethod(mongoose_1.default.Mongoose.prototype, `${id}_modelPatched_global`, wrapper);
+    patchModelMethod(mongoose_1.default.Connection.prototype, `${id}_modelPatched_conn`, wrapper);
 }

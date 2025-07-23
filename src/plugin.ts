@@ -3,12 +3,11 @@
 import { updateToPipeline } from '@eherve/mongoose-update-to-pipeline';
 import { AsyncLocalStorage } from 'async_hooks';
 import * as lodash from 'lodash';
-import mongoose, {
+import {
   Aggregate,
   AnyBulkWriteOperation,
   CallbackWithoutResultAndOptionalError,
   ClientSession,
-  CompileModelOptions,
   FilterQuery,
   Model,
   MongooseBulkWriteOptions,
@@ -20,7 +19,7 @@ import mongoose, {
   UpdateQuery,
 } from 'mongoose';
 import { v4 } from 'uuid';
-import { addMergeUpdateStage, getAggregateTargetModel, hasQueryFieldUpdate } from './update-tools';
+import { addMergeUpdateStage, getAggregateTargetModel, hasQueryFieldUpdate, patchModel } from './update-tools';
 
 export type UpdatedData<T> = FieldUpdateInfo<T> & { itemId: Types.ObjectId; metadata?: any };
 
@@ -55,7 +54,7 @@ const asyncStorage = new AsyncLocalStorage<{
   session?: ClientSession | null;
 }>();
 
-function wrapModel(model: Model<any>) {
+function wrapModel(schema: Schema, model: Model<any>) {
   const create = model.create;
   model.create = function (this: Model<any>, doc: any, options?: any) {
     return asyncStorage.run({ model, session: options?.session, v: v4() }, async () => create.call(this, doc, options));
@@ -80,23 +79,7 @@ function wrapModel(model: Model<any>) {
 
   return model;
 }
-
-function patchModelMethod(prototype: any, flag: string) {
-  if (prototype[flag]) return;
-  const original = prototype.model;
-  prototype.model = function (name: string, schema?: Schema, collection?: string, options?: any) {
-    const model = original.call(this, name, schema, collection, options);
-    if (schema) {
-      wrapModel(model);
-    }
-    return model;
-  };
-  prototype[flag] = true;
-}
-
-patchModelMethod(mongoose, '_modelPatched_mongoose');
-patchModelMethod((mongoose as any).Mongoose.prototype, '_modelPatched_global');
-patchModelMethod(mongoose.Connection.prototype, '_modelPatched_conn');
+patchModel('mongoose-track-plugin', wrapModel);
 
 export interface IHistorize<T> {
   entityId: Types.ObjectId;

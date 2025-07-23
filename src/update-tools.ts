@@ -1,6 +1,6 @@
 /** @format */
 import * as lodash from 'lodash';
-import { Aggregate, Model, PipelineStage } from 'mongoose';
+import mongoose, { Aggregate, Model, PipelineStage, Schema } from 'mongoose';
 
 export function hasQueryFieldUpdate(updates: any, path: string): boolean {
   for (let update of (Array.isArray(updates) ? updates : [updates]) as any[]) {
@@ -66,4 +66,21 @@ export function addMergeUpdateStage(aggregate: Aggregate<any>, $set: any) {
         break;
     }
   } else $merge.whenMatched?.push({ $set });
+}
+
+function patchModelMethod(prototype: any, flag: string, wrapper: (schema: Schema, model: Model<any>) => void) {
+  if (prototype[flag]) return;
+  const original = prototype.model;
+  prototype.model = function (name: string, schema?: Schema, collection?: string, options?: any) {
+    const model = original.call(this, name, schema, collection, options);
+    if (schema) wrapper(schema, model);
+    return model;
+  };
+  prototype[flag] = true;
+}
+
+export function patchModel(id: string, wrapper: (schema: Schema, model: Model<any>) => void) {
+  patchModelMethod(mongoose, `${id}_modelPatched_mongoose`, wrapper);
+  patchModelMethod((mongoose as any).Mongoose.prototype, `${id}_modelPatched_global`, wrapper);
+  patchModelMethod(mongoose.Connection.prototype, `${id}_modelPatched_conn`, wrapper);
 }
