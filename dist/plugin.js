@@ -380,7 +380,7 @@ function buildField(schemaType, name, path, arrays, options) {
         arrays,
         origin: schemaType.options.track.origin ?? options?.origin,
         onUpdate: schemaType.options.track.onUpdate,
-        metadata: schemaType.options.track.metadata,
+        metadata: lodash.merge(options?.metadata, schemaType.options.track.metadata),
         historizeCol: schemaType.options.track.historizeCol,
         historizeField: schemaType.options.track.historizeField,
     };

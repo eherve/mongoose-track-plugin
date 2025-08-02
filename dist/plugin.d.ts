@@ -8,6 +8,13 @@ export type OnUpdate<T = any> = (updated: {
     path: string;
     update: UpdatedData<T>;
 }[], session: ClientSession | null) => Promise<any>;
+export type TrackFieldOptions<T> = boolean | {
+    origin?: () => any;
+    onUpdate?: OnUpdate<T>;
+    metadata?: any;
+    historizeCol?: string;
+    historizeField?: string;
+};
 declare module 'mongoose' {
     interface Schema {
         options?: SchemaOptions;
@@ -17,13 +24,7 @@ declare module 'mongoose' {
         origin?: any;
     }
     interface SchemaTypeOptions<T, EnforcedDocType = any> {
-        track?: boolean | {
-            origin?: () => any;
-            onUpdate?: OnUpdate<T>;
-            metadata?: any;
-            historizeCol?: string;
-            historizeField?: string;
-        };
+        track?: TrackFieldOptions<T>;
     }
 }
 export interface IHistorize<T> {
@@ -46,5 +47,6 @@ export type FieldUpdateInfo<T> = {
 };
 export type TrackPluginOptions = {
     origin?: () => any;
+    metadata?: any;
 };
 export declare const trackPlugin: (schema: Schema, options?: TrackPluginOptions) => void;

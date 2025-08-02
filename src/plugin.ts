@@ -27,6 +27,17 @@ export type OnUpdate<T = any> = (
   updated: { _id: Types.ObjectId; path: string; update: UpdatedData<T> }[],
   session: ClientSession | null
 ) => Promise<any>;
+
+export type TrackFieldOptions<T> =
+  | boolean
+  | {
+      origin?: () => any;
+      onUpdate?: OnUpdate<T>;
+      metadata?: any;
+      historizeCol?: string;
+      historizeField?: string;
+    };
+
 declare module 'mongoose' {
   interface Schema {
     options?: SchemaOptions;
@@ -36,15 +47,7 @@ declare module 'mongoose' {
     origin?: any;
   }
   interface SchemaTypeOptions<T, EnforcedDocType = any> {
-    track?:
-      | boolean
-      | {
-          origin?: () => any;
-          onUpdate?: OnUpdate<T>;
-          metadata?: any;
-          historizeCol?: string;
-          historizeField?: string;
-        };
+    track?: TrackFieldOptions<T>;
   }
 }
 
@@ -103,6 +106,7 @@ export type FieldUpdateInfo<T> = {
 
 export type TrackPluginOptions = {
   origin?: () => any;
+  metadata?: any;
 };
 
 type Field = {
@@ -484,7 +488,7 @@ function buildField(
     arrays,
     origin: schemaType.options.track.origin ?? options?.origin,
     onUpdate: schemaType.options.track.onUpdate,
-    metadata: schemaType.options.track.metadata,
+    metadata: lodash.merge(options?.metadata, schemaType.options.track.metadata),
     historizeCol: schemaType.options.track.historizeCol,
     historizeField: schemaType.options.track.historizeField,
   };
