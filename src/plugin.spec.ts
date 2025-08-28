@@ -812,6 +812,7 @@ async function checkHistorize(
       end: info.updatedAt,
     });
     expect(h).to.not.be.null;
+    expect(h).to.have.property('modelName', model.modelName);
     expect(h).to.have.property('value', previousInfo.value);
     expect(h.previousValue).to.be.undefined;
     expect(h!.start.valueOf()).to.be.equal(previousInfo.updatedAt.valueOf());

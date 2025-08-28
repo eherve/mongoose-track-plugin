@@ -28,6 +28,7 @@ declare module 'mongoose' {
     }
 }
 export interface IHistorize<T> {
+    modelName: string;
     entityId: Types.ObjectId;
     itemId?: Types.ObjectId;
     path: string;

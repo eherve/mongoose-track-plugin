@@ -179,10 +179,10 @@ async function processHistorized(fields, model, data, session = null) {
             if (!bi)
                 bulkInfo.push((bi = { col: field.historizeCol, operations: [] }));
             if (Array.isArray(update)) {
-                lodash.forEach(update, u => bi.operations.push(...buildHistorizeOperation(field, d._id, u)));
+                lodash.forEach(update, u => bi.operations.push(...buildHistorizeOperation(model.modelName, field, d._id, u)));
             }
             else
-                bi.operations.push(...buildHistorizeOperation(field, d._id, update));
+                bi.operations.push(...buildHistorizeOperation(model.modelName, field, d._id, update));
         }
     }
     if (bulkInfo.length) {
@@ -193,11 +193,11 @@ async function processHistorized(fields, model, data, session = null) {
         }
     }
 }
-function buildHistorizeOperation(field, entityId, update) {
+function buildHistorizeOperation(modelName, field, entityId, update) {
     if (!update || !lodash.has(update, 'value'))
         return [];
     const start = update?.updatedAt ?? new Date();
-    const document = { entityId: entityId, path: field.path, start, end: null };
+    const document = { modelName, entityId, path: field.path, start, end: null };
     const filter = { entityId: entityId, path: field.path, end: null };
     if (update.itemId !== undefined)
         document.itemId = filter.itemId = update.itemId;

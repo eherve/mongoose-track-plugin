@@ -85,12 +85,14 @@ function wrapModel(schema: Schema, model: Model<any>) {
 patchModel('mongoose-track-plugin', wrapModel);
 
 export interface IHistorize<T> {
+  modelName: string;
   entityId: Types.ObjectId;
   itemId?: Types.ObjectId;
   path: string;
   start: Date;
   value?: T;
   end: Date | null;
+  duration: number | null;
   previousValue?: T;
   nextValue?: T;
   origin?: any;
@@ -274,8 +276,8 @@ async function processHistorized(
       let bi = lodash.find(bulkInfo, { col: field.historizeCol });
       if (!bi) bulkInfo.push((bi = { col: field.historizeCol, operations: [] }));
       if (Array.isArray(update)) {
-        lodash.forEach(update, u => bi.operations.push(...buildHistorizeOperation(field, d._id, u)));
-      } else bi.operations.push(...buildHistorizeOperation(field, d._id, update));
+        lodash.forEach(update, u => bi.operations.push(...buildHistorizeOperation(model.modelName, field, d._id, u)));
+      } else bi.operations.push(...buildHistorizeOperation(model.modelName, field, d._id, update));
     }
   }
   if (bulkInfo.length) {
@@ -286,10 +288,15 @@ async function processHistorized(
   }
 }
 
-function buildHistorizeOperation(field: Field, entityId: any, update: UpdatedData<any>): AnyBulkWriteOperation<any>[] {
+function buildHistorizeOperation(
+  modelName: string,
+  field: Field,
+  entityId: any,
+  update: UpdatedData<any>
+): AnyBulkWriteOperation<any>[] {
   if (!update || !lodash.has(update, 'value')) return [];
   const start = update?.updatedAt ?? new Date();
-  const document: IHistorize<any> = { entityId: entityId, path: field.path, start, end: null };
+  const document: IHistorize<any> = { modelName, entityId, path: field.path, start, end: null, duration: null };
   const filter: FilterQuery<IHistorize<any>> = { entityId: entityId, path: field.path, end: null };
   if (update.itemId !== undefined) document.itemId = filter.itemId = update.itemId;
   if (update.value !== undefined) document.value = update.value;
