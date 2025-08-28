@@ -35,6 +35,7 @@ export interface IHistorize<T> {
     start: Date;
     value?: T;
     end: Date | null;
+    duration: number | null;
     previousValue?: T;
     nextValue?: T;
     origin?: any;

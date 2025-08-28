@@ -197,7 +197,7 @@ function buildHistorizeOperation(modelName, field, entityId, update) {
     if (!update || !lodash.has(update, 'value'))
         return [];
     const start = update?.updatedAt ?? new Date();
-    const document = { modelName, entityId, path: field.path, start, end: null };
+    const document = { modelName, entityId, path: field.path, start, end: null, duration: null };
     const filter = { entityId: entityId, path: field.path, end: null };
     if (update.itemId !== undefined)
         document.itemId = filter.itemId = update.itemId;
