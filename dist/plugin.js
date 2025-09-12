@@ -424,7 +424,7 @@ function buildFieldUpdate(field, origin, v) {
         [field.infoPath]: buildFieldProjection(field.path, field.infoPath, origin, v),
     };
     if (field.historizeField) {
-        update[field.historizeField] = buildFieldHistorizedProjection(`$${field.historizeField}`, field.path, field.infoPath, origin);
+        update[field.historizeField] = buildFieldHistorizedProjection({ $ifNull: [`$${field.historizeField}`, []] }, field.path, field.infoPath, origin);
     }
     return update;
 }

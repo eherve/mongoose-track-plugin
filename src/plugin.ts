@@ -547,7 +547,7 @@ function buildFieldUpdate(field: Field, origin: any, v: string): any {
   };
   if (field.historizeField) {
     update[field.historizeField] = buildFieldHistorizedProjection(
-      `$${field.historizeField}`,
+      { $ifNull: [`$${field.historizeField}`, []] },
       field.path,
       field.infoPath,
       origin
@@ -556,7 +556,7 @@ function buildFieldUpdate(field: Field, origin: any, v: string): any {
   return update;
 }
 
-function buildFieldHistorizedProjection(value: string, path: string, infoPath: string, origin: any) {
+function buildFieldHistorizedProjection(value: any, path: string, infoPath: string, origin: any) {
   const data = [{ $toLong: '$$NOW' }, `$${path}`];
   if (origin) data.push(origin);
   return {
