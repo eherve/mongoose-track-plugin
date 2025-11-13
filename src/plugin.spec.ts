@@ -14,7 +14,7 @@ const embeddedSchema = new mongoose.Schema({
   status: {
     type: String,
     track: {
-      onUpdate: async data => {
+      onUpdate: async (data: any) => {
         onUpdateData = data;
       },
       metadata: {
@@ -35,7 +35,7 @@ const schema = new mongoose.Schema({
   status: {
     type: String,
     track: {
-      onUpdate: async data => {
+      onUpdate: async (data: any) => {
         onUpdateData = data;
       },
       metadata: {
@@ -49,7 +49,7 @@ const schema = new mongoose.Schema({
     type: String,
     track: {
       origin: () => `schema-origin`,
-      onUpdate: async data => {
+      onUpdate: async (data: any) => {
         onUpdateData = data;
       },
       historizeField: 'stageHistory',
@@ -63,7 +63,7 @@ const schema = new mongoose.Schema({
         status: {
           type: String,
           track: {
-            onUpdate: async data => {
+            onUpdate: async (data: any) => {
               onUpdateData = data;
             },
             metadata: {
@@ -249,7 +249,7 @@ describe('Track Lib', () => {
     it('update one on embeded schema array property', async () => {
       const match = { code: 'A002' };
       const previous = await model.findOne(match);
-      const previousValue = previous.embeddedSchemaArray.find(e => e.code === 'X100').status;
+      const previousValue = previous.embeddedSchemaArray.find((e: { code: string }) => e.code === 'X100').status;
       const value = v4();
       await model.updateOne(
         match,
@@ -282,7 +282,7 @@ describe('Track Lib', () => {
 
     it('update one on array property', async () => {
       const match = { code: 'A004', 'array.code': 'X100' };
-      const previousValue = (await model.findOne(match)).array.find(e => e.code === 'X100').status;
+      const previousValue = (await model.findOne(match)).array.find((e: { code: string }) => e.code === 'X100').status;
       const value = v4();
       await model.updateOne(match, { $set: { 'array.$.status': value } });
       const data = await model.findOne(match);
@@ -394,7 +394,7 @@ describe('Track Lib', () => {
         data.forEach((d, di) => {
           expect(d).to.not.be.null;
           if (!d.array?.length) return;
-          d.array.forEach((e, ei) => {
+          d.array.forEach((e: { statusInfo: any }, ei: string | number) => {
             expect(e).to.have.property('status', 'erreur');
             expect(e.statusInfo).to.not.be.null;
             expect(e.statusInfo).to.have.property('value', 'erreur');
@@ -707,7 +707,7 @@ describe('Track Lib', () => {
         data.forEach((d, di) => {
           expect(d).to.not.be.null;
           if (!d.embeddedSchemaArray?.length) return;
-          d.embeddedSchemaArray.forEach((e, ei) => {
+          d.embeddedSchemaArray.forEach((e: { stageInfo: any }, ei: string | number) => {
             expect(e).to.have.property('stage', 'update-many');
             expect(e.stageInfo).to.not.be.null;
             expect(e.stageInfo).to.have.property('value', 'update-many');
@@ -728,7 +728,7 @@ describe('Track Lib', () => {
         data.forEach((d, di) => {
           expect(d).to.not.be.null;
           if (!d.array?.length) return;
-          d.array.forEach((e, ei) => {
+          d.array.forEach((e: { stageInfo: any }, ei: string | number) => {
             expect(e).to.have.property('stage', 'update-many');
             expect(e.stageInfo).to.not.be.null;
             expect(e.stageInfo).to.have.property('value', 'update-many');
@@ -814,9 +814,9 @@ async function checkHistorize(
     expect(h).to.not.be.null;
     expect(h).to.have.property('modelName', model.modelName);
     expect(h).to.have.property('value', previousInfo.value);
-    expect(h.previousValue).to.be.undefined;
+    expect(h!.previousValue).to.be.undefined;
     expect(h!.start.valueOf()).to.be.equal(previousInfo.updatedAt.valueOf());
-    expect(h.origin).to.be.equal(previousInfo.origin);
+    expect(h!.origin).to.be.equal(previousInfo.origin);
   }
   h = await model.db.collection('historized').findOne({
     entityId,
@@ -825,10 +825,10 @@ async function checkHistorize(
     end: null,
   });
   expect(h).to.not.be.null;
-  expect(h.value).to.be.equal(info.value);
-  expect(h.previousValue).to.be.equal(info.previousValue);
+  expect(h!.value).to.be.equal(info.value);
+  expect(h!.previousValue).to.be.equal(info.previousValue);
   expect(h!.start.valueOf()).to.be.equal(info.updatedAt.valueOf());
-  expect(h.origin).to.be.equal(info.origin);
+  expect(h!.origin).to.be.equal(info.origin);
 }
 
 async function reset(): Promise<void> {
